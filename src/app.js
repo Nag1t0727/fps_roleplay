@@ -1,10 +1,10 @@
-import {createState,step,blankInput,addSignal,SLOTS,SLOT_LABELS} from './engine.js';
+import {createState,step,blankInput,addSignal,SLOTS,SLOT_LABELS,ROUND_COUNT} from './engine.js';
 import {Renderer} from './renderer.js';
 import {Room,generateCode} from './network.js';
 
-const $=id=>document.getElementById(id),renderer=new Renderer($('viewport'));
+const $=id=>document.getElementById(id),renderer=new Renderer($('viewport'),$('body-preview'));
 let room=null,state=null,slot='a-lower',solo=false,inGame=false,connecting=false;
-let keys=new Set(),mouseDown=false,lookDelta=0,lastFrame=performance.now(),netElapsed=0,hudElapsed=0,resultShown=false;
+let keys=new Set(),mouseDown=false,lookDelta=0,pitchDelta=0,lastFrame=performance.now(),netElapsed=0,hudElapsed=0,resultShown=false;
 let networkIssue='',lastSignal=0;
 const hashCode=new URLSearchParams(location.hash.slice(1)).get('room');
 if(hashCode&&/^[a-z0-9]{6}$/i.test(hashCode))$('room-input').value=hashCode.toUpperCase();
@@ -12,7 +12,7 @@ try{$('player-name').value=localStorage.getItem('split-signal-name')||'';}catch{
 
 function status(text,error=false){$('connection-status').textContent=text;$('connection-status').classList.toggle('error',error);}
 function setConnecting(value){connecting=value;$('create-room').disabled=value||!!room;$('join-form').querySelector('button').disabled=value||!!room;$('practice').disabled=value;}
-function clearControls(){keys.clear();mouseDown=false;lookDelta=0;if(room&&!room.isHost)room.sendInput(blankInput());}
+function clearControls(){keys.clear();mouseDown=false;lookDelta=0;pitchDelta=0;if(room&&!room.isHost)room.sendInput(blankInput());}
 
 async function connect(host){
   if(connecting||room)return;
@@ -51,7 +51,7 @@ function renderRoom(){
     button.append(label,name);button.addEventListener('click',()=>room?.claim(s));$('seats').append(button);
   }
   const full=room.players.length===4;$('start-game').disabled=!room.isHost||!full;
-  $('start-game').textContent=room.isHost?(full?'4人でミッション開始 →':`接続待ち ${room.players.length} / 4`):'ホストの開始を待っています';
+  $('start-game').textContent=room.isHost?(full?'3ラウンドの対戦を開始 →':`接続待ち ${room.players.length} / 4`):'ホストの開始を待っています';
 }
 function leaveRoom(){
   room?.close();room=null;networkIssue='';$('room-panel').hidden=true;$('practice-block').hidden=false;
@@ -70,36 +70,40 @@ function exitGame(){
 }
 function startMission(){
   if(!room?.isHost||room.players.length!==4)return;
+  room.inputs={};room.lastInput={};
   state=createState(false);enterGame(false);room.broadcastState(state);
 }
 function configureRole(){
   const upper=slot.endsWith('upper'),unit=slot[0].toUpperCase();
-  $('mode-label').textContent=solo?'SOLO PRACTICE / TAB TO SWITCH':`ROOM ${room?.code||''} / UNIT ${unit}`;
+  $('mode-label').textContent=solo?'SOLO PRACTICE / TAB TO SWITCH':`2 vs 2 / ROOM ${room?.code||''} / UNIT ${unit}`;
   $('role-title').textContent=upper?'ARCHITECT / 上半身':'SEEKER / 下半身';
   $('vision-label').textContent=upper?'STRUCTURAL VISION':'BIOLOGICAL VISION';
-  $('view-note').textContent=upper?'地形・危険な床・出口：可視 / 敵・コア：不可視':'敵・コア：可視 / 地形の詳細：不可視';
+  $('view-note').textContent=upper?(solo?'地形・危険な床・出口：可視 / 敵・コア：不可視':'地形・危険な床：可視 / 相手機体・回復コア：不可視'):(solo?'敵・コア：可視 / 地形の詳細：不可視':'相手機体・回復コア：可視 / 地形の詳細：不可視');
   $('control-title').textContent=upper?'照準・射撃を担当':'移動を担当';
-  $('control-description').textContent=upper?'マウスか左右キーで旋回。クリックかSpaceで射撃。移動は相棒に任せます。':'W / Sで前後、A / Dで左右に移動。向きは上半身役が決めます。コアは触れると回収。';
+  $('control-description').textContent=upper?'マウスか矢印キーで首と照準を上下左右に動かす。首は360°回転。クリックかSpaceで射撃。身体の進行方向は変わりません。':`WASDで身体の向きに沿って移動。Z / Cまたは← →で身体を旋回。Wの方向は画面の矢印を確認。${solo?'コアは触れると回収。':'コアで30HP回復。'}`;
   $('control-keys').replaceChildren();
-  for(const key of upper?['←','→','SPACE','CLICK']:['W','A','S','D']){const k=document.createElement('kbd');k.textContent=key;$('control-keys').append(k);}
+  for(const key of upper?['←','→','↑','↓','SPACE','CLICK']:['W','A','S','D','Z','C']){const k=document.createElement('kbd');k.textContent=key;$('control-keys').append(k);}
   $('signal-one').querySelector('span').textContent=upper?'進んで大丈夫':'正面に敵';
   $('signal-two').querySelector('span').textContent=upper?'止まって！':'コアが見える';
-  $('field-note').textContent=solo?'Tabで役割を切り替え。上半身で方向を決め、下半身で前進しよう。':upper?'敵は相棒にしか見えない。方向を聞いて、引き金を引こう。':'危険な床は相棒にしか見えない。安全な道を聞いて進もう。';
+  $('field-note').textContent=solo?'Tabで役割切替。首の向きとWの方向は別々。下半身のZ / Cで進路を決めよう。':upper?'首を回しても進路は変わりません。「身体を右へ」と言葉で伝えて相棒に曲がってもらおう。':'危険な床は相棒にしか見えません。Wの矢印と身体の方角を確認して進もう。';
   updatePointerHint();
 }
 function updatePointerHint(){
   const upper=slot.endsWith('upper');
-  $('canvas-hint').textContent=upper?(document.pointerLockElement?'マウス：照準 / クリック：射撃 / Esc：解放':'クリックでマウス操作 / ← → と Spaceでも操作可能'):(solo?'WASD：移動 / Tab：上半身に切替':'WASD：移動 / 相棒に敵の方向を伝えよう');
+  $('canvas-hint').textContent=upper?(document.pointerLockElement?'マウス：上下左右の照準 / クリック：射撃 / Esc：解放':'クリックでマウス操作 / 矢印キー：上下左右 / Space：射撃'):(solo?'WASD：移動 / Z・C：身体旋回 / Tab：役割切替':'WASD：身体基準の移動 / Z・C または ← →：身体旋回');
 }
 function readInput(){
   const input=blankInput();
-  if(document.hidden||$('help-dialog').open)return input;
+  if(document.hidden||$('help-dialog').open||state?.status!=='playing')return input;
   if(slot.endsWith('upper')){
     input.turn=(keys.has('ArrowRight')?1:0)-(keys.has('ArrowLeft')?1:0);
+    input.pitchTurn=(keys.has('ArrowUp')?1:0)-(keys.has('ArrowDown')?1:0);
     input.fire=keys.has('Space')||mouseDown;input.look=lookDelta;lookDelta=0;
+    input.pitchLook=pitchDelta;pitchDelta=0;
   }else{
     input.forward=(keys.has('KeyW')?1:0)-(keys.has('KeyS')?1:0);
     input.strafe=(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0);
+    input.bodyTurn=(keys.has('KeyC')||keys.has('ArrowRight')?1:0)-(keys.has('KeyZ')||keys.has('ArrowLeft')?1:0);
   }
   return input;
 }
@@ -115,10 +119,14 @@ function switchRole(){
 function updateHUD(){
   const team=state.teams.find(t=>t.id===slot[0]);
   const seconds=Math.ceil(state.time);$('timer').textContent=`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
-  $('core-count').textContent=`${state.collected} / 4`;
-  $('objective').textContent=state.collected===4?'北東の出口に全機集合':'エネルギーコアを回収';
+  const duel=state.mode==='duel';
+  $('round-label').textContent=duel?`ROUND ${state.round} / ${ROUND_COUNT}`:'PRACTICE / ESCAPE';
+  $('core-count').textContent=duel?`A ${state.scores.a} : ${state.scores.b} B`:`${state.collected} / 4`;
+  $('objective').textContent=duel?'相手機体を撃破 / 時間切れは残りHP':state.collected===4?'北東の出口に全機集合':'エネルギーコアを回収';
   const deg=(Math.round(team.angle*180/Math.PI)+450)%360;
-  $('compass').textContent=`${['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8]} · ${String(deg).padStart(3,'0')}°`;
+  $('compass').textContent=`${['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8]} · ${String(deg).padStart(3,'0')}° / P ${Math.round(team.pitch*180/Math.PI)}°`;
+  const bodyDeg=(Math.round(team.bodyAngle*180/Math.PI)+450)%360;
+  $('body-heading').textContent=`BODY / W ${String(bodyDeg).padStart(3,'0')}°`;
   $('location').textContent=`POSITION ${team.x.toFixed(1)} / ${team.y.toFixed(1)}`;
   const signal=state.signals.find(s=>s.team===slot[0]);
   const paused=!solo&&room?.players.length<4;
@@ -130,7 +138,7 @@ function updateHUD(){
     if(solo&&t.id==='b')continue;
     const card=document.createElement('div');card.className=`team-card${t.id!==slot[0]?' other':''}`;
     const header=document.createElement('header'),label=document.createElement('b'),hp=document.createElement('span');
-    label.textContent=`UNIT ${t.id.toUpperCase()}${t.id===slot[0]?' / YOU':''}`;hp.textContent=`${Math.ceil(t.hp)} HP`;header.append(label,hp);
+    label.textContent=`UNIT ${t.id.toUpperCase()}${t.id===slot[0]?' / YOU':' / ENEMY'}`;hp.textContent=`${Math.ceil(t.hp)} HP`;header.append(label,hp);
     const track=document.createElement('div');track.className='health-track';const fill=document.createElement('div');fill.style.width=`${t.hp}%`;track.append(fill);
     const crew=document.createElement('p');crew.textContent=solo?'ひとり練習 / Tabで役割切替':room?.players.filter(p=>p.slot[0]===t.id).map(p=>p.name).join(' + ')||'接続待ち';
     card.append(header,track,crew);$('team-status').append(card);
@@ -138,15 +146,32 @@ function updateHUD(){
   $('game-network').textContent=solo?'● LOCAL SIMULATION':networkIssue?'△ 通信状況を確認してください':`● P2P ${room?.players.length||0}/4 · ${room?.isHost?'HOST':'CONNECTED'}`;
   $('game-network').title=networkIssue;
   if(state.status!=='playing')showResult();
-  else if(resultShown){resultShown=false;$('result').hidden=true;}
+  else if(resultShown){resultShown=false;$('result').hidden=true;clearControls();$('viewport').focus({preventScroll:true});}
 }
 function showResult(){
+  if(state.mode==='duel'){showDuelResult();return;}
   if(resultShown)return;resultShown=true;clearControls();document.exitPointerLock?.();
   const won=state.status==='won';$('result').hidden=false;
   $('result-kicker').textContent=won?'MISSION COMPLETE':'SIGNAL LOST';
   $('result-title').textContent=won?'接続が、道をひらいた。':'もう一度、声をつなごう。';
   $('result-description').textContent=won?`${Math.floor(state.elapsed/60)}分${Math.floor(state.elapsed%60)}秒で帰還。コア ${state.collected}/4 · ドローン停止 ${state.kills}体`:`${state.reason} コア ${state.collected}/4。次は相棒と道順を相談しよう。`;
   $('retry').hidden=!solo&&!room?.isHost;
+  $('retry').disabled=false;
+  $('retry').textContent='もう一度プレイ';
+}
+
+function showDuelResult(){
+  if(!resultShown){resultShown=true;clearControls();document.exitPointerLock?.();}
+  $('result').hidden=false;
+  const finished=state.status==='finished',winner=finished?state.winner:state.roundWinner;
+  $('result-kicker').textContent=finished?'MATCH COMPLETE':`ROUND ${state.round} / ${ROUND_COUNT} COMPLETE`;
+  $('result-title').textContent=winner?`${winner===slot[0]?'勝利！':'敗北'} UNIT ${winner.toUpperCase()}${finished?' が総合優勝':' がラウンド獲得'}`:'引き分け';
+  const history=state.rounds.map(r=>`R${r.round}: ${r.winner?r.winner.toUpperCase():'DRAW'}`).join(' / ');
+  const next=finished?(room?.isHost?'ホストが再戦を開始できます。':'ホストの再戦開始を待っています。'):room?.players.length<4?'接続待ち：4人そろうと次ラウンドへ進みます。':`${Math.ceil(state.intermission)}秒後にラウンド${state.round+1}開始。開始位置を交代します。`;
+  $('result-description').textContent=`${state.reason}。A ${state.scores.a} : ${state.scores.b} B — ${history}。${next}`;
+  $('retry').hidden=!finished||!room?.isHost;
+  $('retry').disabled=room?.players.length!==4;
+  $('retry').textContent='もう一度3ラウンド対戦';
 }
 
 function frame(now){
@@ -188,17 +213,22 @@ $('viewport').addEventListener('pointerdown',e=>{
   $('viewport').focus({preventScroll:true});
   if(slot.endsWith('upper')){
     if(document.pointerLockElement)mouseDown=true;
-    else {const result=$('viewport').requestPointerLock?.();result?.catch?.(()=>{$('canvas-hint').textContent='← →で旋回 / Spaceで射撃';});}
+    else {const result=$('viewport').requestPointerLock?.();result?.catch?.(()=>{$('canvas-hint').textContent='矢印キーで上下左右の照準 / Spaceで射撃';});}
   }
 });
 document.addEventListener('pointerup',()=>{mouseDown=false;});
-document.addEventListener('mousemove',e=>{if(inGame&&slot.endsWith('upper')&&document.pointerLockElement=== $('viewport'))lookDelta=Math.max(-.35,Math.min(.35,lookDelta+e.movementX*.0025));});
+document.addEventListener('mousemove',e=>{
+  if(inGame&&slot.endsWith('upper')&&document.pointerLockElement=== $('viewport')){
+    lookDelta=Math.max(-.35,Math.min(.35,lookDelta+e.movementX*.0025));
+    pitchDelta=Math.max(-.35,Math.min(.35,pitchDelta-e.movementY*.0025));
+  }
+});
 document.addEventListener('pointerlockchange',()=>{mouseDown=false;updatePointerHint();});
 document.addEventListener('keydown',e=>{
   if(!inGame||$('help-dialog').open)return;
   if(e.target instanceof HTMLButtonElement&&['Space','Enter'].includes(e.code))return;
   if(e.code==='Tab'&&solo){e.preventDefault();if(!e.repeat)switchRole();return;}
-  if(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','Space','KeyQ','KeyE'].includes(e.code)){
+  if(['KeyW','KeyA','KeyS','KeyD','KeyZ','KeyC','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyQ','KeyE'].includes(e.code)){
     e.preventDefault();keys.add(e.code);if(!e.repeat&&e.code==='KeyQ')sendSignal(0);if(!e.repeat&&e.code==='KeyE')sendSignal(1);
   }
 });

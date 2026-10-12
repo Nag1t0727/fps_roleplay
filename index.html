@@ -4,22 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#111310">
-  <meta name="description" content="4人、2つの身体、異なる世界。見えるものと操作を分け合う協力型FPSプロトタイプ。">
+  <meta name="description" content="4人、2つの身体、全3ラウンド。2人で1体を操作する2対2の対戦FPS。">
   <title>SPLIT SIGNAL — ふたりで、ひとつの視界へ。</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23111310'/%3E%3Cpath d='M10 9h9v22h-9zm12 0h9v22h-9z' fill='%23d6fa70'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="./" aria-label="SPLIT SIGNAL ホーム"><span class="brand-icon">Ⅱ</span> SPLIT SIGNAL<span class="brand-tag">CO-OP EXPERIMENT</span></a>
+    <a class="brand" href="./" aria-label="SPLIT SIGNAL ホーム"><span class="brand-icon">Ⅱ</span> SPLIT SIGNAL<span class="brand-tag">2 vs 2 / THREE ROUNDS</span></a>
     <span class="build-label"><i></i> PROTOTYPE / 01</span>
   </header>
 
   <main id="lobby" class="lobby">
     <section class="intro">
-      <div class="eyebrow"><span>ASYMMETRIC CO-OP FPS</span><span>04 PLAYERS → 02 BODIES</span></div>
+      <div class="eyebrow"><span>ASYMMETRIC PvP FPS</span><span>04 PLAYERS → 02 BODIES</span></div>
       <h1>ONE BODY.<br><span>TWO REALITIES.</span></h1>
-      <div class="intro-bottom"><p>君に見えないものを、相棒が見ている。<br>視界と身体を分け合う、4人協力型脱出ゲーム。</p><a href="#how-to" class="text-link">作戦を確認する <span>↙</span></a></div>
+      <div class="intro-bottom"><p>君に見えないものを、相棒が見ている。<br>2人で1体。全3ラウンドで競う、2対2の対戦FPS。</p><a href="#how-to" class="text-link">作戦を確認する <span>↙</span></a></div>
     </section>
 
     <div class="main-grid">
@@ -42,7 +42,7 @@
           <div class="body-caption lower-caption"><span>02 / SEEKER</span><strong>気配が見える。<br>足を動かす。</strong><small>↙ LOWER BODY</small></div>
           <span class="vertical-caption">SHARED BODY / DIVIDED PERCEPTION</span>
         </div>
-        <div class="visual-footer"><span><b>2</b> 人で1体を操作</span><span><b>2</b> 組で協力</span><span><b>1</b> つの脱出口</span></div>
+        <div class="visual-footer"><span><b>2</b> 人で1体を操作</span><span><b>2</b> チームで対戦</span><span><b>3</b> ラウンドで決着</span></div>
       </section>
 
       <section class="connect-panel" aria-labelledby="connect-title">
@@ -70,9 +70,9 @@
     <section id="how-to" class="how-to">
       <div class="how-heading"><div class="section-index">02 — FIELD MANUAL</div><h2>情報が欠ける。会話が生まれる。</h2></div>
       <div class="manual-grid">
-        <article><span class="manual-number">01</span><h3>見る世界が違う</h3><p>上半身役は壁・危険な床・出口を認識。下半身役は敵とエネルギーコアを認識します。互いの画面は見せず、言葉で補いましょう。</p><div class="manual-tags"><span class="lime">上半身：地形と照準</span><span>下半身：気配と移動</span></div></article>
-        <article><span class="manual-number">02</span><h3>身体を分け合う</h3><p>下半身役がWASDで移動。上半身役がマウスか左右キーで向きを変え、クリックかSpaceで射撃。下半身役の「敵は右！」が照準の頼りです。</p><div class="key-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>×</span><kbd>←</kbd><kbd>→</kbd><kbd>SPACE</kbd></div></article>
-        <article><span class="manual-number">03</span><h3>全員で帰還する</h3><p>6分以内に4個のコアを回収して、2体とも北東の出口へ。倒れた機体には、生きている機体が近づくと救助できます。</p><div class="mission-line"><span>COLLECT 04</span><span>→</span><span>EXTRACT 02</span></div></article>
+        <article><span class="manual-number">01</span><h3>見る世界が違う</h3><p>上半身役は壁・危険な床・地図を認識。下半身役は相手機体と回復コアを認識します。相棒だけと声をつなぎ、見えない情報を補いましょう。</p><div class="manual-tags"><span class="lime">上半身：地形と照準</span><span>下半身：気配と移動</span></div></article>
+        <article><span class="manual-number">02</span><h3>身体と首は、別の向き</h3><p>下半身役はWASDで移動、Z / Cで身体を旋回。上半身役は首を360°回し、上下にも照準を動かせます。視点が変わってもWの進行方向は変わりません。</p><div class="key-row"><kbd>WASD</kbd><kbd>Z</kbd><kbd>C</kbd><span>×</span><kbd>↑↓←→</kbd><kbd>SPACE</kbd></div></article>
+        <article><span class="manual-number">03</span><h3>3ラウンドで決着</h3><p>1ラウンド90秒。相手のHPを0にするか、時間切れでHPが多い側の勝ち。射撃は25ダメージ、コアは30回復。全3ラウンドの勝利数を競います。同点は引き分け。</p><div class="mission-line"><span>UNIT A vs UNIT B</span><span>→</span><span>03 ROUNDS</span></div></article>
       </div>
     </section>
     <footer class="site-footer"><span>SPLIT SIGNAL © 2026</span><span>同じ場所にいる。でも、同じ世界にはいない。</span><span>WEBRTC / PEER TO PEER</span></footer>
@@ -82,10 +82,11 @@
     <div class="game-toolbar"><div><span id="mode-label" class="eyebrow">PRACTICE</span><strong id="role-title">SEEKER / 下半身</strong></div><div class="game-toolbar-actions"><button id="switch-role" class="button small">役割を切替 <kbd>Tab</kbd></button><button id="quit-game" class="button small">ロビーへ</button></div></div>
     <div class="game-layout">
       <div class="viewport-wrap">
-        <canvas id="viewport" width="960" height="600" tabindex="0" aria-label="一人称ゲーム画面。上半身は左右キーとSpace、下半身はWASDで操作"></canvas>
+        <canvas id="viewport" width="960" height="600" tabindex="0" aria-label="一人称ゲーム画面。上半身は矢印キーで上下左右の照準とSpaceで射撃。下半身はWASDで移動、ZとCで身体を旋回"></canvas>
         <div class="hud-top"><span id="vision-label">BIOLOGICAL VISION</span><span id="compass">N · 000°</span><span id="timer">06:00</span></div>
-        <div class="hud-objective"><span>MISSION / 01</span><strong id="objective">エネルギーコアを回収</strong><span id="core-count">0 / 4</span></div>
+        <div class="hud-objective"><span id="round-label">ROUND 1 / 3</span><strong id="objective">相手機体を撃破</strong><span id="core-count">A 0 : 0 B</span></div>
         <div id="crosshair" class="crosshair">+</div>
+        <div class="body-monitor"><span id="body-heading">BODY / W 000°</span><canvas id="body-preview" width="220" height="280" aria-label="自機の姿勢。歩行による四肢の動きと、身体から独立した首の回転を表示"></canvas></div>
         <div id="signal" class="signal" role="status" aria-live="polite" hidden></div>
         <div id="canvas-hint" class="canvas-hint">画面をクリックして操作開始</div>
         <div class="hud-bottom"><span id="view-note">敵・コア：可視 / 地形の詳細：不可視</span><span id="location">SECTOR 01</span></div>
@@ -104,7 +105,7 @@
       </aside>
     </div>
     <div class="game-footer"><span id="game-network">● LOCAL SIMULATION</span><span>音声通話で連携しよう · Escでマウスを解放</span><button id="toggle-help" class="text-link">操作説明</button></div>
-    <dialog id="help-dialog"><h2>ふたりで動かす、ひとつの身体。</h2><p>下半身：WASDで前後・左右に移動。上半身：マウスまたは← →で旋回、クリックまたはSpaceで射撃。Q / Eは相棒への合図です。</p><p>コアは触れると自動回収。4個集めたら、2体とも地図の北東にある出口へ。練習では1体だけで脱出できます。床の赤い区画は危険。倒れた味方には2マス以内で4秒待つと救助できます。</p><p>練習中はTabで役割を切り替えます。相棒の自動操作はありません。上半身で方向を決めてから、下半身で移動してください。</p><form method="dialog"><button class="button primary">了解</button></form></dialog>
+    <dialog id="help-dialog"><h2>ふたりで動かす、ひとつの身体。</h2><p>下半身：WASDで身体の前後・左右へ移動。Z / Cまたは← →で身体を旋回。上半身：マウスまたは矢印キーで照準を上下左右へ動かし、クリックかSpaceで射撃。首は左右360°、上下60°まで動きます。首を回しても身体の向きは変わりません。Wの矢印が実際の前進方向です。Q / Eは相棒だけへの合図。</p><p>対戦は全3ラウンド、各90秒。相手を倒すか、時間切れで残りHPが多い側が勝利。同じHP・同時撃破は引き分けです。射撃は25ダメージ、コアに触れると30回復。赤い床はダメージを受けます。ラウンド間は5秒待ち、開始位置を交代してHPとコアをリセット。3ラウンド合計の勝利数で総合勝敗を決めます。</p><p>1人練習は脱出ルールです。6分以内にコア4個を回収して北東の出口へ。Tabで役割を切り替えます。自動操作の相棒はいません。下半身で進路を決め、上半身で周囲を見て狙ってください。右下の自機モデルで四肢と首の向きを確認できます。</p><form method="dialog"><button class="button primary">了解</button></form></dialog>
   </main>
   <script type="module" src="./src/app.js"></script>
 </body>

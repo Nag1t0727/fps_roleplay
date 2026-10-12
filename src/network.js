@@ -1,6 +1,6 @@
 import {SLOTS,sanitizeInput} from './engine.js';
 
-const PREFIX='split-signal-v1-';
+const PREFIX='split-signal-v3-';
 let libraryPromise;
 function loadPeer(){
   if(globalThis.Peer)return Promise.resolve(globalThis.Peer);
@@ -49,7 +49,7 @@ export class Room {
           this.slot='a-lower';this.players=[{id,name:this.name,slot:this.slot,host:true}];
           this.peer.on('connection',c=>this.accept(c));this.publishRoster();ready();
         }else{
-          this.hostConnection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:1,name:this.name}});
+          this.hostConnection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:3,name:this.name}});
           this.hostConnection.on('data',data=>{
             if(!data||typeof data!=='object'||this.closed)return;
             if(data.type==='reject'){fail(new Error(data.message));return;}
@@ -75,7 +75,7 @@ export class Room {
     connection.on('open',()=>{
       if(this.closed){connection.close();return;}
       const metadata=connection.metadata;
-      if(metadata?.game!=='split-signal'||metadata.version!==1||this.players.length>=4||this.connections.has(connection.peer)){
+      if(metadata?.game!=='split-signal'||metadata.version!==3||this.players.length>=4||this.connections.has(connection.peer)){
         this.safeSend(connection,{type:'reject',message:'ルームが満員、または互換性のない接続です。'});
         setTimeout(()=>connection.close(),250);return;
       }
@@ -91,6 +91,7 @@ export class Room {
         const clean=sanitizeInput(data.input);
         // Accumulate mouse deltas between host ticks; keyboard state is replaced.
         clean.look=Math.max(-.7,Math.min(.7,(this.inputs[player.slot]?.look||0)+clean.look));
+        clean.pitchLook=Math.max(-.7,Math.min(.7,(this.inputs[player.slot]?.pitchLook||0)+clean.pitchLook));
         this.inputs[player.slot]=clean;this.lastInput[player.slot]=performance.now();
       }
       if(data.type==='claim')this.claimFor(player.id,data.slot);
@@ -130,6 +131,7 @@ export class Room {
     for(const [slot,input]of Object.entries(this.inputs)){
       if(now-(this.lastInput[slot]||0)<400)result[slot]={...input};
       input.look=0; // Mouse movement is a delta, not a held key.
+      input.pitchLook=0;
     }
     return result;
   }
