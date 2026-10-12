@@ -52,7 +52,7 @@ npm start
 
 ## GitHub Pagesに公開
 
-このリポジトリのルートがそのまま公開用ファイルです。`vendor/` を含めてGitHubへpushしてください。
+このリポジトリのルートがそのまま公開用ファイルです。`vendor/` と `network-config.js` を含めてGitHubへpushしてください。
 
 1. GitHubのリポジトリで **Settings → Pages** を開く。
 2. **Build and deployment → Source → Deploy from a branch** を選ぶ。
@@ -70,14 +70,38 @@ HTMLとCSSだけでは通信できないため、JavaScriptのWebRTC DataChannel
 - ホストがシミュレーションを進め、約20回/秒で状態を配信。各クライアントは入力を送信する。
 - ホストは接続ごとの役割を管理し、他の役割の操作を適用しない。入力値を制限し、400ms以上更新がない入力は解除する。
 - 壁・敵・コアなどの状態は各ブラウザへ配信し、役割に応じて描画を変える。改造クライアントへのチート対策や秘密情報の保護は対象外。
-- 学校・企業のファイアウォールやNATの種類によってWebRTCが接続できない場合がある。別回線で試すか、別途TURNサーバーを用意する必要がある。TURN中継はこのプロトタイプに同梱していない。
+- 学校・企業のファイアウォールやNATの種類によってWebRTCの直接接続ができない場合がある。別回線で試すか、別途TURNサーバーを用意する必要がある。PeerJS 1.5.5の既定設定には終了済みのTURNサービスが含まれるため、本作では明示的なSTUN設定で置き換える。有効なTURN中継は初期状態では未設定。
 - HTTPSのGitHub Pagesまたはlocalhostで実行。画面やマイクの権限は不要。音声通話は別サービスを利用する。
 - PeerJSの配布ファイルは`vendor/`に同梱し、MITライセンスを添付。練習モードは通信サーバーを使わない。Google Fontsの取得に失敗しても代替フォントで動作。
 - 身体・首の独立操作版は通信プロトコルv3を使用。以前の版のルームには接続できないため、全員がページを再読み込みしてから新しいルームを作成する。
 
-独自のPeerServer / STUN / TURNを使う場合は、`index.html`のモジュール読み込みより前に `globalThis.SPLIT_SIGNAL_PEER_OPTIONS` を設定すると、PeerJSのコンストラクタオプションに渡されます。公開ファイルへ永続的な秘密鍵やTURNの長期認証情報を埋め込まないでください。
+### 接続エラーと今回の修正
 
-参考：[PeerJS接続方法](https://peerjs.com/client/getting-started)、[シグナリングとNAT/TURNの制約](https://peerjs.com/client/faq)
+シグナリング切断後にホストが再登録されない不具合を修正。同じコード・参加者・役割・既存の通信を保って最大6回、自動再接続します。参加者側もホストが一時的に見つからない場合は計4回まで照会します。サーバー接続には20秒、その後のプレイヤー間接続には別途45秒の待ち時間を設けました（以前は全体で18秒）。再接続で切断済みのゲーム通信が自動復活するわけではなく、DataChannelが切れた参加者はロビーから再参加します。
+
+| 表示コード | 意味・確認すること |
+| --- | --- |
+| `ROOM_NOT_FOUND` | サーバーにホストが登録されていない。コード違い、ホストの退出・再読み込み・回線切断、古い版の利用を確認。全員で更新し、ホストが新しいルームと招待URLを作る。 |
+| `SIGNALING_TIMEOUT` / `SIGNALING_ERROR` | 接続サーバーとの通信に失敗。インターネット接続・回線制限・PeerJS Cloudの状態を確認。 |
+| `P2P_TIMEOUT` / `P2P_FAILED` | サーバーへの接続後、ホストとの通信が成立しない。ホストのタブを前面に保ち、別回線で試す。NATやファイアウォールによる制限にはTURN中継が必要。 |
+| `SIGNALING_LOST` | 自動再接続も失敗。既存のP2P通信は継続できるが新規参加はできない。回線復帰後にタブへ戻ると再試行。 |
+| `TURN_CONFIG` | 以下の中継設定取得に失敗。取得先、JSON形式、CORSを確認。 |
+
+公開版への反映にはGitHubへpushしてPagesのデプロイを待つ必要があります。デプロイ後に全員が再読み込みし、ホストが新しいルームを作成してください。招待URLと変更したJavaScriptには更新識別子を付け、古いキャッシュを利用しにくくしています。
+
+### TURN中継を利用する場合
+
+`network-config.js` の `peerOptions` で独自のPeerServer / STUN / TURNを設定できます。従来の `globalThis.SPLIT_SIGNAL_PEER_OPTIONS` も利用できます。**終了済みTURNの参照を除去しただけでは、直接接続できない回線同士はつながりません。** 有効なTURNサービスまたは自前のTURNサーバーが必要です。
+
+短期認証情報を発行するHTTPSエンドポイントがある場合は、`iceServersUrl` にその公開URLを設定します。ホスト・参加者それぞれが接続前に取得し、STUN設定に追加します。応答は下記の形か `RTCIceServer` の配列で、サイトのオリジンからのCORSアクセスを許可してください。
+
+```json
+{"iceServers":[{"urls":["turns:YOUR_SERVER:443"],"username":"TEMPORARY_USERNAME","credential":"TEMPORARY_PASSWORD"}]}
+```
+
+発行用のAPIキーはエンドポイント側のサーバーで保管します。GitHub Pagesの公開ファイルや取得URLへ秘密鍵・管理APIキー・TURNの長期認証情報を埋め込まないでください。エンドポイント・TURNサービスの運用は別途必要で、本リポジトリには含みません。設定取得失敗時は `TURN_CONFIG` を表示します。
+
+参考：[PeerJS接続方法](https://peerjs.com/client/getting-started)、[シグナリングとNAT/TURNの制約](https://peerjs.com/client/faq)、[PeerJSの無料TURN終了告知](https://github.com/orgs/peers/discussions/1172)
 
 ## ファイルと検証
 

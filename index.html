@@ -57,7 +57,7 @@
         <p id="connection-status" class="connection-status" role="status" aria-live="polite">招待コードで接続 · アカウント不要</p>
         <div id="room-panel" class="room-panel" hidden>
           <div class="room-heading"><div><small>ROOM CODE</small><strong id="room-code">------</strong></div><button id="copy-room" class="button small">招待をコピー</button></div>
-          <p class="muted small-text">空いている役割を選んでください。</p>
+          <p class="muted small-text">空いている役割を選んでください。ホストはこのタブを開いたままにしてください。閉じる・再読み込みでルームは終了します。</p>
           <div id="seats" class="seats"></div>
           <button id="start-game" class="button primary" disabled>4人の接続を待っています</button>
           <button id="leave-room" class="text-link">ルームから退出</button>
@@ -107,6 +107,6 @@
     <div class="game-footer"><span id="game-network">● LOCAL SIMULATION</span><span>音声通話で連携しよう · Escでマウスを解放</span><button id="toggle-help" class="text-link">操作説明</button></div>
     <dialog id="help-dialog"><h2>ふたりで動かす、ひとつの身体。</h2><p>下半身：WASDで身体の前後・左右へ移動。Z / Cまたは← →で身体を旋回。上半身：マウスまたは矢印キーで照準を上下左右へ動かし、クリックかSpaceで射撃。首は左右360°、上下60°まで動きます。首を回しても身体の向きは変わりません。Wの矢印が実際の前進方向です。Q / Eは相棒だけへの合図。</p><p>対戦は全3ラウンド、各90秒。相手を倒すか、時間切れで残りHPが多い側が勝利。同じHP・同時撃破は引き分けです。射撃は25ダメージ、コアに触れると30回復。赤い床はダメージを受けます。ラウンド間は5秒待ち、開始位置を交代してHPとコアをリセット。3ラウンド合計の勝利数で総合勝敗を決めます。</p><p>1人練習は脱出ルールです。6分以内にコア4個を回収して北東の出口へ。Tabで役割を切り替えます。自動操作の相棒はいません。下半身で進路を決め、上半身で周囲を見て狙ってください。右下の自機モデルで四肢と首の向きを確認できます。</p><form method="dialog"><button class="button primary">了解</button></form></dialog>
   </main>
-  <script type="module" src="./src/app.js"></script>
+  <script type="module" src="./src/app.js?v=20261012-1"></script>
 </body>
 </html>

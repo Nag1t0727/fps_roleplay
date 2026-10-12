@@ -1,6 +1,6 @@
 import {createState,step,blankInput,addSignal,SLOTS,SLOT_LABELS,ROUND_COUNT} from './engine.js';
 import {Renderer} from './renderer.js';
-import {Room,generateCode} from './network.js';
+import {Room,generateCode} from './network.js?v=20261012-1';
 
 const $=id=>document.getElementById(id),renderer=new Renderer($('viewport'),$('body-preview'));
 let room=null,state=null,slot='a-lower',solo=false,inGame=false,connecting=false;
@@ -26,6 +26,7 @@ async function connect(host){
     onState:next=>{if(room!==session)return;state=next;if(!inGame)enterGame(false);},
     onSignal:(from,index)=>{if(state&&state.status==='playing')addSignal(state,from,index);},
     onError:message=>{if(room!==session)return;networkIssue=message;status(message,true);},
+    onStatus:message=>{if(room!==session)return;networkIssue='';status(message);},
     onClosed:message=>{if(room!==session)return;exitGame();leaveRoom();status(message,true);},
   });
   room=session;
@@ -203,7 +204,7 @@ $('quit-game').addEventListener('click',()=>{exitGame();if(room)leaveRoom();});
 $('retry').addEventListener('click',()=>{if(solo)enterGame(true);else startMission();});
 $('signal-one').addEventListener('click',()=>sendSignal(0));$('signal-two').addEventListener('click',()=>sendSignal(1));
 $('copy-room').addEventListener('click',async()=>{
-  if(!room)return;const url=new URL(location.href);url.hash=`room=${room.code}`;
+  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','20261012-1');url.hash=`room=${room.code}`;
   try{await navigator.clipboard.writeText(url.href);status('招待URLをコピーしました。3人に共有してください。');}catch{status(`コピーできませんでした。コード ${room.code} を共有してください。`);}
 });
 $('toggle-help').addEventListener('click',()=>{clearControls();document.exitPointerLock?.();$('help-dialog').showModal();});

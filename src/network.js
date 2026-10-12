@@ -1,4 +1,5 @@
 import {SLOTS,sanitizeInput} from './engine.js';
+import {peerOptions,iceServersUrl} from '../network-config.js?v=20261012-1';
 
 const PREFIX='split-signal-v3-';
 let libraryPromise;
@@ -16,60 +17,149 @@ function loadPeer(){
 }
 const cleanName=name=>typeof name==='string'?name.trim().slice(0,16)||'パイロット':'パイロット';
 const peerError=error=>({
-  'peer-unavailable':'ルームが見つかりません。コードとホストの接続を確認してください。',
+  'peer-unavailable':'[ROOM_NOT_FOUND] ルームが見つかりません。ホストがルームを開いたままか確認し、全員でページを再読み込みして新しい招待URLを共有してください。',
   'unavailable-id':'コードが使用中です。もう一度ルームを作成してください。',
-  'network':'接続サーバーに到達できません。ネットワークを確認してください。',
-  'webrtc':'P2P接続に失敗しました。別のネットワークで試してください。',
+  'network':'[SIGNALING_ERROR] 接続サーバーに到達できません。ネットワークを確認してください。',
+  'server-error':'[SIGNALING_ERROR] 接続サーバーでエラーが発生しました。少し待ってからやり直してください。',
+  'socket-error':'[SIGNALING_ERROR] 接続サーバーとの通信に失敗しました。',
+  'webrtc':'[P2P_FAILED] プレイヤー間の通信経路を確立できません。別回線で試すか、公開者がTURN中継を設定する必要があります。',
   'browser-incompatible':'このブラウザはWebRTCに対応していません。Chromeなどで開いてください。',
 }[error.type]||`接続エラー：${error.type||'unknown'}`);
+
+async function connectionOptions(){
+  const overrides={...peerOptions,...(globalThis.SPLIT_SIGNAL_PEER_OPTIONS||{})};
+  // PeerJS 1.5.5 includes discontinued PeerJS TURN servers in its defaults.
+  const config={iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}],...overrides.config};
+  if(iceServersUrl){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+    try{
+      const response=await fetch(iceServersUrl,{signal:controller.signal,cache:'no-store',credentials:'omit'});
+      if(!response.ok)throw new Error();
+      const data=await response.json(),servers=Array.isArray(data)?data:data.iceServers;
+      if(!Array.isArray(servers)||!servers.length||!servers.every(server=>{
+        const urls=Array.isArray(server?.urls)?server.urls:[server?.urls];
+        return urls.length&&urls.every(url=>typeof url==='string'&&/^(stun|stuns|turn|turns):/.test(url));
+      }))throw new Error();
+      config.iceServers=[...config.iceServers,...servers];
+    }catch{
+      throw new Error('[TURN_CONFIG] 中継設定を取得できません。公開者がnetwork-config.jsの取得先と設定を確認してください。');
+    }finally{clearTimeout(timer);}
+  }
+  return {debug:0,...overrides,config};
+}
 
 export class Room {
   constructor(callbacks={}){
     this.callbacks=callbacks;this.players=[];this.connections=new Map();this.inputs={};this.lastInput={};
     this.isHost=false;this.closed=false;this.slot=null;this.id=null;this.code='';this.lastStateAt=0;
+    this.reconnectAttempts=0;
   }
   async open(host,code,name){
     this.isHost=host;this.code=code;this.name=cleanName(name);
-    const Peer=await loadPeer();
+    const [Peer,options]=await Promise.all([loadPeer(),connectionOptions()]);
     if(this.closed)throw new Error('接続はキャンセルされました。');
-    // Optional ICE overrides (e.g. your own short-lived TURN credentials).
-    const options={debug:0,...(globalThis.SPLIT_SIGNAL_PEER_OPTIONS||{})};
     this.peer=host?new Peer(PREFIX+code,options):new Peer(options);
     return new Promise((resolve,reject)=>{
-      let settled=false;
-      const timer=setTimeout(()=>fail(new Error('接続がタイムアウトしました。学校の回線で制限されている場合は別の回線を試してください。')),18000);
-      const fail=error=>{if(!settled){settled=true;clearTimeout(timer);reject(error);this.close();}else this.callbacks.onError?.(error.message);};
-      const ready=()=>{if(!settled){settled=true;clearTimeout(timer);resolve(this);}};
-      this.peer.on('error',e=>fail(new Error(peerError(e))));
-      this.peer.on('disconnected',()=>this.callbacks.onError?.('接続サーバーとの接続が切れました。既存のP2P通信は継続しますが、新規参加にはルームの作り直しが必要です。'));
+      let settled=false,initialized=false,joinAttempts=0;
+      const fail=error=>{
+        if(this.closed)return;
+        if(!settled){settled=true;reject(error);this.close();}
+        else this.callbacks.onError?.(error.message);
+      };
+      this.cancelOpen=()=>{if(!settled){settled=true;reject(new Error('接続はキャンセルされました。'));}};
+      const deadline=(ms,message)=>{clearTimeout(this.openTimer);this.openTimer=setTimeout(()=>fail(new Error(message)),ms);};
+      const ready=()=>{if(!settled){settled=true;clearTimeout(this.openTimer);resolve(this);}};
+      deadline(20000,'[SIGNALING_TIMEOUT] 接続サーバーの応答がありません。インターネット接続を確認するか、別回線で試してください。');
+      this.callbacks.onStatus?.('接続サーバーに接続しています…');
+      const join=()=>{
+        if(this.closed)return;
+        if(!this.peer.open){this.joinTimer=setTimeout(join,1000);return;}
+        joinAttempts++;
+        this.callbacks.onStatus?.('ホストを探して、プレイヤー間の通信経路を確認しています…');
+        const connection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:3,name:this.name}});
+        this.hostConnection=connection;
+        connection.on('data',data=>{
+          if(!data||typeof data!=='object'||this.closed||this.hostConnection!==connection)return;
+          if(data.type==='reject'){fail(new Error(data.message));return;}
+          if(data.type==='roster'&&Array.isArray(data.players)){
+            this.players=data.players;this.slot=this.players.find(p=>p.id===this.id)?.slot||null;
+            if(!this.slot)return;
+            this.callbacks.onRoster?.(this.players);ready();
+          }
+          if(data.type==='state'&&this.slot){this.lastStateAt=performance.now();this.callbacks.onState?.(data.state);}
+          if(data.type==='notice')this.callbacks.onError?.(data.message);
+        });
+        connection.on('iceStateChanged',state=>{
+          if(this.closed||this.hostConnection!==connection)return;
+          if(state==='checking')this.callbacks.onStatus?.('ホストが応答しました。プレイヤー間の接続を確立しています…');
+        });
+        connection.on('close',()=>{
+          if(this.closed||this.hostConnection!==connection)return;
+          if(!settled)fail(new Error(peerError({type:'webrtc'})));
+          else this.callbacks.onClosed?.('ホストとの接続が切れました。ロビーから入り直してください。');
+        });
+        connection.on('error',()=>{
+          if(this.hostConnection===connection)fail(new Error(peerError({type:'webrtc'})));
+        });
+      };
+      this.peer.on('error',e=>{
+        if(this.closed)return;
+        if(e.type==='peer-unavailable'&&!host&&!settled){
+          // The host may be re-registering after a short signaling outage.
+          const previous=this.hostConnection;this.hostConnection=null;previous?.close();
+          if(joinAttempts<4){
+            this.callbacks.onStatus?.('ホストの再接続を待っています…');
+            clearTimeout(this.joinTimer);this.joinTimer=setTimeout(join,2000);return;
+          }
+        }
+        if(initialized&&['network','socket-error','server-error','disconnected'].includes(e.type)){
+          this.scheduleReconnect();return;
+        }
+        fail(new Error(peerError(e)));
+      });
+      this.peer.on('disconnected',()=>{
+        if(this.closed)return;
+        this.callbacks.onError?.('接続サーバーへ再接続しています。ホストのタブを開いたままお待ちください。');
+        this.scheduleReconnect();
+      });
+      this.wake=()=>{
+        if(!this.closed&&!this.peer.open){this.reconnectAttempts=0;this.scheduleReconnect();}
+      };
+      globalThis.addEventListener?.('online',this.wake);
+      globalThis.addEventListener?.('focus',this.wake);
+      if(host)this.peer.on('connection',c=>this.accept(c));
       this.peer.on('open',id=>{
         if(this.closed)return;
+        clearTimeout(this.reconnectTimer);this.reconnectTimer=null;
+        const recovering=this.reconnectAttempts>0;this.reconnectAttempts=0;
+        if(recovering)this.callbacks.onStatus?.('接続サーバーへの再接続が完了しました。参加を受け付けています。');
+        // PeerJS emits open again after reconnect. Never reset a live roster.
+        if(initialized)return;
+        initialized=true;
         this.id=id;
         if(host){
           this.slot='a-lower';this.players=[{id,name:this.name,slot:this.slot,host:true}];
-          this.peer.on('connection',c=>this.accept(c));this.publishRoster();ready();
+          this.publishRoster();ready();
         }else{
-          this.hostConnection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:3,name:this.name}});
-          this.hostConnection.on('data',data=>{
-            if(!data||typeof data!=='object'||this.closed)return;
-            if(data.type==='reject'){fail(new Error(data.message));return;}
-            if(data.type==='roster'&&Array.isArray(data.players)){
-              this.players=data.players;this.slot=this.players.find(p=>p.id===this.id)?.slot||null;
-              if(!this.slot)return;
-              this.callbacks.onRoster?.(this.players);ready();
-            }
-            if(data.type==='state'&&this.slot){this.lastStateAt=performance.now();this.callbacks.onState?.(data.state);}
-            if(data.type==='notice')this.callbacks.onError?.(data.message);
-          });
-          this.hostConnection.on('close',()=>{
-            if(this.closed)return;
-            if(!settled)fail(new Error('ホストとの接続が切れました。'));
-            else this.callbacks.onClosed?.('ホストとの接続が切れました。ロビーから入り直してください。');
-          });
-          this.hostConnection.on('error',()=>fail(new Error('ホストとの通信に失敗しました。')));
+          deadline(45000,'[P2P_TIMEOUT] プレイヤー間の接続がタイムアウトしました。ホストのタブを開いたまま別回線で試してください。改善しない場合はTURN中継の設定が必要です。');
+          join();
         }
       });
     });
+  }
+  scheduleReconnect(){
+    if(this.closed||this.reconnectTimer)return;
+    if(this.peer.destroyed||this.reconnectAttempts>=6){
+      this.callbacks.onError?.('[SIGNALING_LOST] 接続サーバーに復帰できません。既存の対戦は続けられますが、新規参加には回線を確認してルームを作り直してください。');return;
+    }
+    this.reconnectTimer=setTimeout(()=>{
+      this.reconnectTimer=null;
+      if(this.closed||this.peer.open)return;
+      this.reconnectAttempts++;
+      if(!this.peer.disconnected)this.peer.disconnect();
+      try{this.peer.reconnect();}catch{/* Retry within the same bounded budget. */}
+      this.scheduleReconnect();
+    },Math.min(1000*2**this.reconnectAttempts,8000));
   }
   accept(connection){
     connection.on('open',()=>{
@@ -136,7 +226,10 @@ export class Room {
     return result;
   }
   close(){
-    this.closed=true;this.hostConnection?.close();for(const c of this.connections.values())c.close();
+    this.closed=true;this.cancelOpen?.();
+    clearTimeout(this.openTimer);clearTimeout(this.joinTimer);clearTimeout(this.reconnectTimer);
+    globalThis.removeEventListener?.('online',this.wake);globalThis.removeEventListener?.('focus',this.wake);
+    this.hostConnection?.close();for(const c of this.connections.values())c.close();
     this.peer?.destroy();this.connections.clear();this.players=[];this.inputs={};
   }
 }
