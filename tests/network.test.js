@@ -112,3 +112,30 @@ test('default ICE config excludes retired TURN and explicit ICE overrides are pr
     assert.deepEqual(another.peer.options.config,override.config);
   }finally{another.close();globalThis.SPLIT_SIGNAL_PEER_OPTIONS=previous;}
 });
+
+test('guest requests roster again when the initial roster is missing',async t=>{
+  const room=setup(t),pending=room.open(false,'ABCDEF','guest');
+  await setImmediate();room.peer.register();
+  const connection=room.hostConnection,sent=[];
+  connection.open=true;connection.send=data=>sent.push(data);connection.emit('open');
+  assert.deepEqual(sent,[{type:'hello'}]);
+  connection.emit('data',{type:'roster',players:[{id:'test-peer',slot:'a-upper'}]});
+  assert.equal(await pending,room);
+});
+
+test('host can resend roster without allocating a second seat',()=>{
+  const room=new Room(),connection=new Connection(),sent=[];
+  room.players=[{id:'host',slot:'a-lower',host:true}];
+  Object.assign(connection,{peer:'guest',open:true,metadata:{game:'split-signal',version:5,name:'Guest'},send:data=>sent.push(data)});
+  room.accept(connection);connection.emit('open');
+  connection.emit('data',{type:'hello'});connection.emit('data',{type:'hello'});
+  assert.equal(room.players.length,2);assert.equal(sent.length,3);
+  assert.deepEqual(sent[0].players,sent[2].players);room.close();
+});
+
+test('timeouts distinguish missing relay, configured relay, and completed transport',()=>{
+  const room=new Room();room.hostConnection={peerConnection:{iceConnectionState:'failed'}};
+  assert.match(room.joinFailure(),/P2P_TIMEOUT.*ICE: failed.*TURN: 未設定/);
+  room.hasRelay=true;assert.match(room.joinFailure(),/TURN: 設定あり/);
+  room.hostConnection.open=true;assert.match(room.joinFailure(),/JOIN_TIMEOUT/);
+});

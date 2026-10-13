@@ -1,5 +1,5 @@
 import {SLOTS,sanitizeInput} from './engine.js?v=20261013-2';
-import {peerOptions,iceServersUrl} from '../network-config.js?v=20261013-2';
+import {peerOptions,iceServersUrl} from '../network-config.js?v=20261013-3';
 
 const PREFIX='split-signal-v5-';
 let libraryPromise;
@@ -58,6 +58,7 @@ export class Room {
     this.isHost=host;this.code=code;this.name=cleanName(name);
     const [Peer,options]=await Promise.all([loadPeer(),connectionOptions()]);
     if(this.closed)throw new Error('接続はキャンセルされました。');
+    this.hasRelay=options.config.iceServers.some(server=>(Array.isArray(server.urls)?server.urls:[server.urls]).some(url=>/^turns?:/.test(url)));
     this.peer=host?new Peer(PREFIX+code,options):new Peer(options);
     return new Promise((resolve,reject)=>{
       let settled=false,initialized=false,joinAttempts=0;
@@ -67,7 +68,7 @@ export class Room {
         else this.callbacks.onError?.(error.message);
       };
       this.cancelOpen=()=>{if(!settled){settled=true;reject(new Error('接続はキャンセルされました。'));}};
-      const deadline=(ms,message)=>{clearTimeout(this.openTimer);this.openTimer=setTimeout(()=>fail(new Error(message)),ms);};
+      const deadline=(ms,message)=>{clearTimeout(this.openTimer);this.openTimer=setTimeout(()=>fail(new Error(typeof message==='function'?message():message)),ms);};
       const ready=()=>{if(!settled){settled=true;clearTimeout(this.openTimer);resolve(this);}};
       deadline(20000,'[SIGNALING_TIMEOUT] 接続サーバーの応答がありません。インターネット接続を確認するか、別回線で試してください。');
       this.callbacks.onStatus?.('接続サーバーに接続しています…');
@@ -78,13 +79,23 @@ export class Room {
         this.callbacks.onStatus?.('ホストを探して、プレイヤー間の通信経路を確認しています…');
         const connection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:5,name:this.name}});
         this.hostConnection=connection;
+        connection.on('open',()=>{
+          if(this.closed||settled||this.hostConnection!==connection)return;
+          this.callbacks.onStatus?.('通信経路がつながりました。入室情報を確認しています…');
+          // Request a fresh roster after the guest's channel is ready.
+          this.safeSend(connection,{type:'hello'});
+          clearInterval(this.rosterTimer);
+          this.rosterTimer=setInterval(()=>{
+            if(!this.closed&&!settled&&this.hostConnection===connection)this.safeSend(connection,{type:'hello'});
+          },1500);
+        });
         connection.on('data',data=>{
           if(!data||typeof data!=='object'||this.closed||this.hostConnection!==connection)return;
           if(data.type==='reject'){fail(new Error(data.message));return;}
           if(data.type==='roster'&&Array.isArray(data.players)){
             this.players=data.players;this.slot=this.players.find(p=>p.id===this.id)?.slot||null;
             if(!this.slot)return;
-            this.callbacks.onRoster?.(this.players);ready();
+            clearInterval(this.rosterTimer);this.callbacks.onRoster?.(this.players);ready();
           }
           if(data.type==='state'&&this.slot){this.lastStateAt=performance.now();this.callbacks.onState?.(data.state);}
           if(data.type==='notice')this.callbacks.onError?.(data.message);
@@ -141,11 +152,18 @@ export class Room {
           this.slot='a-lower';this.players=[{id,name:this.name,slot:this.slot,host:true}];
           this.publishRoster();ready();
         }else{
-          deadline(45000,'[P2P_TIMEOUT] プレイヤー間の接続がタイムアウトしました。ホストのタブを開いたまま別回線で試してください。改善しない場合はTURN中継の設定が必要です。');
+          deadline(45000,()=>this.joinFailure());
           join();
         }
       });
     });
+  }
+  joinFailure(){
+    const connection=this.hostConnection;
+    if(connection?.open)return '[JOIN_TIMEOUT] 通信は成立しましたが入室情報を受信できません。全員がページを再読み込みし、ルームを作り直してください。';
+    const ice=connection?.peerConnection?.iceConnectionState||'unknown';
+    return `[P2P_TIMEOUT] プレイヤー間の通信経路を確立できませんでした（ICE: ${ice} / TURN: ${this.hasRelay?'設定あり':'未設定'}）。`+
+      (this.hasRelay?'中継サーバーの認証・到達性と両者の回線を確認してください。':'直接接続できない回線にはTURN中継の設定が必要です。まず同じWi-Fiで接続できるか確認してください。');
   }
   scheduleReconnect(){
     if(this.closed||this.reconnectTimer)return;
@@ -177,6 +195,7 @@ export class Room {
     connection.on('data',data=>{
       const player=this.players.find(p=>p.id===connection.peer);
       if(!player||!data||typeof data!=='object')return;
+      if(data.type==='hello'){this.safeSend(connection,{type:'roster',players:this.players.map(({id,name,slot,host})=>({id,name,slot,host}))});return;}
       if(data.type==='input'){
         const clean=sanitizeInput(data.input);
         // Accumulate mouse deltas between host ticks; keyboard state is replaced.
@@ -229,7 +248,7 @@ export class Room {
   }
   close(){
     this.closed=true;this.cancelOpen?.();
-    clearTimeout(this.openTimer);clearTimeout(this.joinTimer);clearTimeout(this.reconnectTimer);
+    clearInterval(this.rosterTimer);clearTimeout(this.openTimer);clearTimeout(this.joinTimer);clearTimeout(this.reconnectTimer);
     globalThis.removeEventListener?.('online',this.wake);globalThis.removeEventListener?.('focus',this.wake);
     this.hostConnection?.close();for(const c of this.connections.values())c.close();
     this.peer?.destroy();this.connections.clear();this.players=[];this.inputs={};
