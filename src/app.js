@@ -1,7 +1,10 @@
-import {createState,step,blankInput,addSignal,placePing,SLOTS,SLOT_LABELS,ROUND_COUNT,ITEM_INFO} from './engine.js?v=20261013-2';
-import {Renderer} from './renderer.js?v=forest-1';
-import {Room,generateCode} from './network.js?v=mqtt-1';
+import {createState,step,blankInput,addSignal,placePing,SLOTS,SLOT_LABELS,ROUND_COUNT,ITEM_INFO} from './engine.js?v=motion-1';
+import {Renderer} from './renderer.js?v=motion-1';
+import {MotionView,HostCamera} from './motion.js?v=motion-1';
+import {Room,generateCode} from './network.js?v=motion-1';
 
+const motion=new MotionView(),hostCamera=new HostCamera();
+let pendingInput=blankInput(),lastSentInput='',localInputSeq=0,rosterSignature='',displayFps=60,renderMs=0;
 const $=id=>document.getElementById(id),renderer=new Renderer($('viewport'),$('body-preview'));
 let room=null,state=null,slot='a-lower',solo=false,inGame=false,connecting=false;
 let keys=new Set(),mouseDown=false,lookDelta=0,pitchDelta=0,lastFrame=performance.now(),netElapsed=0,hudElapsed=0,resultShown=false;
@@ -12,7 +15,7 @@ try{$('player-name').value=localStorage.getItem('split-signal-name')||'';}catch{
 
 function status(text,error=false){$('connection-status').textContent=text;$('connection-status').classList.toggle('error',error);}
 function setConnecting(value){connecting=value;$('create-room').disabled=value||!!room;$('join-form').querySelector('button').disabled=value||!!room;$('practice').disabled=value;}
-function clearControls(){keys.clear();mouseDown=false;lookDelta=0;pitchDelta=0;if(room&&!room.isHost)room.sendInput(blankInput());}
+function clearControls(){keys.clear();mouseDown=false;lookDelta=0;pitchDelta=0;pendingInput=blankInput();lastSentInput='';if(room&&!room.isHost)localInputSeq=room.sendInput(blankInput());}
 
 async function connect(host){
   if(connecting||room)return;
@@ -22,8 +25,8 @@ async function connect(host){
   try{localStorage.setItem('split-signal-name',name);}catch{}
   setConnecting(true);status(host?'ルームを作成しています…':'中継サーバー経由でホストに接続しています…');
   const session=new Room({
-    onRoster:()=>{if(room!==session)return;slot=session.slot||slot;renderRoom();if(inGame)configureRole();},
-    onState:next=>{if(room!==session)return;state=next;if(!inGame)enterGame(false);},
+    onRoster:()=>{if(room!==session)return;slot=session.slot||slot;const signature=JSON.stringify(session.players);if(signature===rosterSignature)return;rosterSignature=signature;renderRoom();if(inGame)configureRole();},
+    onState:(next,meta)=>{if(room!==session)return;state=next;if(!inGame)enterGame(false);motion.receive(next,meta,slot,performance.now());},
     onSignal:(from,index)=>{if(state&&state.status==='playing')addSignal(state,from,index);},
     onPing:from=>{if(state&&session.players.length===4)placePing(state,from);},
     onError:message=>{if(room!==session)return;networkIssue=message;status(message,true);},
@@ -56,23 +59,23 @@ function renderRoom(){
   $('start-game').textContent=room.isHost?(full?'3ラウンドの対戦を開始 →':`接続待ち ${room.players.length} / 4`):'ホストの開始を待っています';
 }
 function leaveRoom(){
-  room?.close();room=null;networkIssue='';$('room-panel').hidden=true;$('practice-block').hidden=false;
+  room?.close();room=null;networkIssue='';rosterSignature='';motion.clear();$('room-panel').hidden=true;$('practice-block').hidden=false;
   setConnecting(false);status('ルームから退出しました。');
 }
 function enterGame(practice){
-  solo=practice;inGame=true;resultShown=false;clearControls();
+  motion.clear();hostCamera.clear();solo=practice;inGame=true;resultShown=false;clearControls();
   if(practice){slot='a-lower';state=createState(true);}else slot=room.slot;
   $('lobby').hidden=true;$('game').hidden=false;$('result').hidden=true;document.body.classList.add('playing');
   $('switch-role').hidden=!practice;configureRole();window.scrollTo(0,0);$('viewport').focus({preventScroll:true});
   lastFrame=performance.now();netElapsed=0;hudElapsed=.2;
 }
 function exitGame(){
-  clearControls();document.exitPointerLock?.();inGame=false;state=null;solo=false;
+  clearControls();motion.clear();document.exitPointerLock?.();inGame=false;state=null;solo=false;
   $('game').hidden=true;$('lobby').hidden=false;document.body.classList.remove('playing');
 }
 function startMission(){
   if(!room?.isHost||room.players.length!==4)return;
-  room.inputs={};room.lastInput={};
+  room.inputs={};room.lastInput={};room.inputAcks={};
   state=createState(false);enterGame(false);room.broadcastState(state);
 }
 function configureRole(){
@@ -162,7 +165,8 @@ function updateHUD(){
     card.append(header,track,crew);$('team-status').append(card);
   }
   $('game-network').textContent=solo?'● LOCAL SIMULATION':networkIssue?'△ 通信状況を確認してください':`● MQTT ${room?.players.length||0}/4 · ${room?.isHost?'HOST':'CONNECTED'}`;
-  $('game-network').title=networkIssue;
+  $('game-network').textContent+=` · ${Math.round(displayFps)} fps`;
+  $('game-network').title=networkIssue||`描画 ${renderMs.toFixed(1)}ms / 状態受信 ${room?.receiveInterval?.toFixed(0)||'—'}ms`;
   if(state.status!=='playing')showResult();
   else if(resultShown){resultShown=false;$('result').hidden=true;clearControls();$('viewport').focus({preventScroll:true});}
 }
@@ -193,20 +197,31 @@ function showDuelResult(){
 }
 
 function frame(now){
-  const dt=Math.min((now-lastFrame)/1000,.05);lastFrame=now;
+  const elapsed=now-lastFrame,dt=Math.max(0,Math.min(elapsed/1000,.05));lastFrame=now;
+  if(elapsed>0&&elapsed<250)displayFps=displayFps*.95+1000/elapsed*.05;
   if(inGame&&state){
     netElapsed+=dt;hudElapsed+=dt;
+    const input=readInput();
     if(solo||(room?.isHost&&room.players.length===4)){
-      const inputs=room&&!solo?room.readInputs():{};inputs[slot]=readInput();step(state,inputs,dt);
+      const inputs=room&&!solo?room.readInputs(state.status==='playing'?dt:0):{};
+      inputs[slot]=input;step(state,inputs,dt);
     }
     if(!solo&&room){
-      if(netElapsed>=.05){
-        if(room.isHost)room.broadcastState(state);else room.sendInput(readInput());
-        netElapsed=0;
+      if(room.isHost){
+        if(netElapsed>=.05){room.broadcastState(state);netElapsed%=.05;}
+      }else{
+        pendingInput={...input,look:pendingInput.look+input.look,pitchLook:pendingInput.pitchLook+input.pitchLook};
+        const held=JSON.stringify([input.forward,input.strafe,input.turn,input.pitchTurn,input.fire]);
+        // Key transitions leave immediately; held input is refreshed at 20 Hz.
+        if(netElapsed>=.05||held!==lastSentInput){
+          localInputSeq=room.sendInput(pendingInput);lastSentInput=held;
+          pendingInput.look=0;pendingInput.pitchLook=0;netElapsed%=.05;
+        }
       }
     }
-    renderer.draw(state,slot);
-    if(hudElapsed>=.1){updateHUD();hudElapsed=0;}
+    const view=!solo&&room&&!room.isHost?motion.sample(state,slot,now,dt,input,localInputSeq,room.players.length===4&&!document.hidden):!solo&&room?.isHost?hostCamera.sample(state,slot,dt):state;
+    const start=performance.now();renderer.draw(view,slot);renderMs=renderMs*.9+(performance.now()-start)*.1;
+    if(hudElapsed>=.1){updateHUD();hudElapsed%=.1;}
   }
   requestAnimationFrame(frame);
 }
@@ -222,7 +237,7 @@ $('retry').addEventListener('click',()=>{if(solo)enterGame(true);else startMissi
 $('signal-one').addEventListener('click',()=>sendSignal(0));$('signal-two').addEventListener('click',()=>sendSignal(1));
 $('ping-button').addEventListener('click',sendPing);
 $('copy-room').addEventListener('click',async()=>{
-  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','mqtt-1');url.hash=`room=${room.code}`;
+  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','motion-1');url.hash=`room=${room.code}`;
   try{await navigator.clipboard.writeText(url.href);status('招待URLをコピーしました。3人に共有してください。');}catch{status(`コピーできませんでした。コード ${room.code} を共有してください。`);}
 });
 $('toggle-help').addEventListener('click',()=>{clearControls();document.exitPointerLock?.();$('help-dialog').showModal();});

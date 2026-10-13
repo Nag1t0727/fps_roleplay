@@ -52,3 +52,18 @@ test('canceling an unavailable room rejects open and stops clients',async t=>{
   const rejected=assert.rejects(pending,/キャンセル/);await drain();guest.close();await rejected;
   assert.ok(guest.clients.every(c=>!c.connected));
 });
+
+test('snapshots acknowledge only simulated input duration, reset new commands and clear reassigned slots',async t=>{
+  const make=setup(t),host=make(),received=[],guest=make({onState:(s,meta)=>received.push(meta)});
+  await host.open(true,'ABCDEF','Host');await guest.open(false,'ABCDEF','Guest');
+  guest.claim('b-lower');await drain();
+  const seq=guest.sendInput({forward:1});await drain();
+  host.readInputs(.016);host.readInputs(.02);
+  const state=createState();host.broadcastState(state);await drain();
+  assert.deepEqual(received[0].acks['b-lower'],{seq,elapsed:.036000000000000004});
+  assert.ok(Number.isFinite(received[0].at));
+  const next=guest.sendInput({forward:0});await drain();assert.deepEqual(host.inputAcks['b-lower'],{seq:next,elapsed:0});
+  host.lastInput['b-lower']=performance.now()-500;host.readInputs(.05);assert.equal(host.inputAcks['b-lower'].elapsed,0);
+  guest.claim('b-upper');await drain();assert.equal(host.inputAcks['b-lower'],undefined);
+  host.broadcastState(createState());await drain();assert.ok(received.at(-1).epoch>received[0].epoch);
+});

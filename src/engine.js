@@ -115,13 +115,22 @@ function moveAndLook(team,inputs,dt){
   team.angle=normalizeAngle(team.angle+upper.turn*2.05*dt+upper.look);
   team.pitch=Math.max(-MAX_PITCH,Math.min(MAX_PITCH,team.pitch+upper.pitchTurn*1.35*dt+upper.pitchLook));
   team.bodyAngle=team.angle;
+  advanceMovement(team,lower,dt);
+  return upper;
+}
+
+// Shared movement-only simulation for host authority and client prediction.
+// Does not collect items, apply damage, shoot, or advance the match clock.
+export function advanceMovement(team,input,dt){
+  const lower=sanitizeInput(input);
+  dt=Math.max(0,Math.min(dt,.05));
   const speed=2.35*(team.boost>0?1.3:1)*dt/Math.max(1,Math.hypot(lower.forward,lower.strafe)),x=team.x,y=team.y;
   move(team,(Math.cos(team.bodyAngle)*lower.forward-Math.sin(team.bodyAngle)*lower.strafe)*speed,
     (Math.sin(team.bodyAngle)*lower.forward+Math.cos(team.bodyAngle)*lower.strafe)*speed);
   const travelled=Math.hypot(team.x-x,team.y-y);
   team.gait=(team.gait+travelled*9)%(Math.PI*2);
   team.moveSpeed+=(Math.min(1,travelled/Math.max(dt*2.35,1e-8))-team.moveSpeed)*Math.min(1,dt*14);
-  return upper;
+
 }
 
 export function placePing(state,slot){

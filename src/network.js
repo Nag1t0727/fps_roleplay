@@ -1,4 +1,4 @@
-import {SLOTS,sanitizeInput} from './engine.js?v=20261013-2';
+import {SLOTS,sanitizeInput} from './engine.js?v=motion-1';
 import {mqttBrokers} from '../network-config.js?v=mqtt-1';
 
 let libraryPromise;
@@ -24,12 +24,12 @@ class Channel{
 export class Room{
   constructor(callbacks={}){
     this.callbacks=callbacks;this.players=[];this.connections=new Map();this.inputs={};this.lastInput={};
-    this.clients=[];this.readyClients=new Set();this.seen=new Map();this.seq=0;this.departed=new Set();
+    this.clients=[];this.readyClients=new Set();this.seen=new Map();this.seq=0;this.inputSequence=0;this.inputAcks={};this.epoch=0;this.departed=new Set();
     this.isHost=false;this.closed=false;this.slot=null;this.lastStateAt=0;this.joined=false;
   }
   async open(host,code,name){
     this.isHost=host;this.code=code;this.name=cleanName(name);this.id=crypto.randomUUID();
-    this.topic=`split-signal/mqtt-v1/${code}/messages`;
+    this.topic=`split-signal/mqtt-v2/${code}/messages`;
     const mqtt=await loadMqtt();if(this.closed)throw new Error('接続はキャンセルされました。');
     const brokers=globalThis.SPLIT_SIGNAL_MQTT_BROKERS||mqttBrokers;
     if(!Array.isArray(brokers)||!brokers.length)throw new Error('[MQTT_CONFIG] 接続先が設定されていません。');
@@ -121,7 +121,11 @@ export class Room{
     if(!this.hostId||m.from!==this.hostId)return;
     this.lastHostAt=performance.now();
     if(m.kind==='leave'){this.fail('ホストがルームを閉じました。');return;}
-    if(m.kind==='state'&&this.slot){this.lastStateAt=performance.now();this.callbacks.onState?.(m.data.state);}
+    if(m.kind==='state'&&this.slot){
+      const now=performance.now();
+      if(this.lastStateAt)this.receiveInterval=(this.receiveInterval||50)*.8+(now-this.lastStateAt)*.2;
+      this.lastStateAt=now;this.callbacks.onState?.(m.data.state,{at:m.data.at,epoch:m.data.epoch,acks:m.data.acks||{}});
+    }
   }
   accept(connection){
     connection.on('open',()=>{
@@ -141,6 +145,8 @@ export class Room{
       if(!player||!data||typeof data!=='object')return;
       if(data.type==='hello'){this.safeSend(connection,{type:'roster',players:this.players.map(({id,name,slot,host})=>({id,name,slot,host}))});return;}
       if(data.type==='input'){
+        if(!Number.isSafeInteger(data.inputSeq)||data.inputSeq<=0||data.inputSeq<=(this.inputAcks[player.slot]?.seq||0))return;
+        this.inputAcks[player.slot]={seq:data.inputSeq,elapsed:0};
         const clean=sanitizeInput(data.input);
         // Accumulate mouse deltas between host ticks; keyboard state is replaced.
         clean.look=Math.max(-.7,Math.min(.7,(this.inputs[player.slot]?.look||0)+clean.look));
@@ -155,7 +161,7 @@ export class Room{
     });
     const remove=()=>{
       if(this.closed||this.connections.get(connection.peer)!==connection)return;
-      const p=this.players.find(p=>p.id===connection.peer);if(p){delete this.inputs[p.slot];delete this.lastInput[p.slot];}
+      const p=this.players.find(p=>p.id===connection.peer);if(p){delete this.inputs[p.slot];delete this.lastInput[p.slot];delete this.inputAcks[p.slot];}
       this.players=this.players.filter(p=>p.id!==connection.peer);this.connections.delete(connection.peer);this.publishRoster();
     };
     connection.on('close',remove);connection.on('error',remove);
@@ -174,17 +180,23 @@ export class Room{
   claimFor(id,slot){
     if(!SLOTS.includes(slot)||this.players.some(p=>p.slot===slot))return;
     const player=this.players.find(p=>p.id===id);if(!player)return;
-    delete this.inputs[player.slot];delete this.lastInput[player.slot];player.slot=slot;this.publishRoster();
+    delete this.inputs[player.slot];delete this.lastInput[player.slot];delete this.inputAcks[player.slot];player.slot=slot;this.publishRoster();
   }
   claim(slot){if(this.isHost)this.claimFor(this.id,slot);else this.safeSend(this.hostConnection,{type:'claim',slot});}
-  sendInput(input){this.safeSend(this.hostConnection,{type:'input',input});}
+  sendInput(input){const inputSeq=++this.inputSequence;this.safeSend(this.hostConnection,{type:'input',input,inputSeq});return inputSeq;}
   signal(index){if(this.isHost)this.callbacks.onSignal?.(this.slot,index);else this.safeSend(this.hostConnection,{type:'signal',index});}
   ping(){if(this.isHost)this.callbacks.onPing?.(this.slot);else this.safeSend(this.hostConnection,{type:'ping'});}
-  broadcastState(state){this.publish('state',{type:'state',state});}
-  readInputs(){
+  broadcastState(state){
+    if(this.broadcastSource!==state){this.broadcastSource=state;this.epoch++;}
+    this.publish('state',{type:'state',state,at:performance.now(),epoch:this.epoch,acks:this.inputAcks});
+  }
+  readInputs(dt=0){
     const now=performance.now(),result={};
     for(const [slot,input]of Object.entries(this.inputs)){
-      if(now-(this.lastInput[slot]||0)<400)result[slot]={...input};
+      if(now-(this.lastInput[slot]||0)<400){
+        result[slot]={...input};
+        if(this.inputAcks[slot])this.inputAcks[slot].elapsed+=Math.max(0,Math.min(dt,.05));
+      }
       input.look=0; // Mouse movement is a delta, not a held key.
       input.pitchLook=0;
     }

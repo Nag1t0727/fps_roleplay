@@ -1,5 +1,5 @@
-import {MAP,WIDTH,HEIGHT,HAZARDS,EXIT,raycast,normalizeAngle,distance,EYE_HEIGHT,WALL_HEIGHT,ROBOT_HEIGHT,ITEM_INFO} from './engine.js?v=20261013-2';
-import {OutdoorEnvironment} from './environment.js?v=forest-1';
+import {MAP,WIDTH,HEIGHT,HAZARDS,EXIT,raycast,normalizeAngle,distance,EYE_HEIGHT,WALL_HEIGHT,ROBOT_HEIGHT,ITEM_INFO} from './engine.js?v=motion-1';
+import {OutdoorEnvironment} from './environment.js?v=motion-1';
 import {drawHumanoid} from './humanoid.js';
 
 export function visibleEntities(state,slot){

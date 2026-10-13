@@ -27,7 +27,7 @@ export class OutdoorEnvironment{
       for(let x=-margin;x<width+margin;x+=1.4){this.forest.push({x:x+r(),y:-margin-r()*3,z:5+r()*4,kind:Math.floor(r()*4)});this.forest.push({x:x+r(),y:height+margin+r()*3,z:5+r()*5,kind:Math.floor(r()*4)});}
       for(let y=-margin;y<height+margin;y+=1.4){this.forest.push({x:-margin-r()*3,y:y+r(),z:5+r()*4,kind:Math.floor(r()*4)});this.forest.push({x:width+margin+r()*3,y:y+r(),z:5+r()*5,kind:Math.floor(r()*4)});}
     }
-    this.floorCanvas=canvas(1,1);
+    this.floorCanvas=canvas(1,1);this.visibleTrees=[];this.forestPose={};
   }
   tree(index){
     const image=canvas(256,512),c=image.getContext('2d'),r=random(903+index*301);
@@ -56,16 +56,32 @@ export class OutdoorEnvironment{
       const cloud=c.createRadialGradient(x,y,0,x,y,radius);cloud.addColorStop(0,'#f9f5df38');cloud.addColorStop(1,'#f9f5df00');c.fillStyle=cloud;c.fillRect(x-radius,y-radius,radius*2,radius*2);
     }
     this.floor(c,team,w,h,plane,horizon,eye,upper);
-    const cos=Math.cos(team.angle),sin=Math.sin(team.angle);
-    const visible=this.forest.map(t=>({...t,d:(t.x-team.x)*cos+(t.y-team.y)*sin,s:-(t.x-team.x)*sin+(t.y-team.y)*cos})).filter(t=>t.d>.2).sort((a,b)=>b.d-a.d);
-    for(const t of visible){
-      const height=t.z*plane/t.d,width=height*.5,x=w/2+t.s*plane/t.d-width/2,y=horizon+(eye-t.z)*plane/t.d;
-      if(x+width<0||x>w||y>h)continue;
-      c.globalAlpha=Math.max(.35,1-t.d/100);c.drawImage(this.trees[t.kind],x,y,width,height);
+    // Reuse projection records and sort only visible trees when the camera moves.
+    const pose=this.forestPose;
+    if(pose.x!==team.x||pose.y!==team.y||pose.angle!==team.angle||pose.pitch!==team.pitch||pose.w!==w||pose.h!==h){
+      Object.assign(pose,{x:team.x,y:team.y,angle:team.angle,pitch:team.pitch,w,h});
+      const cos=Math.cos(team.angle),sin=Math.sin(team.angle);this.visibleTrees.length=0;
+      for(const tree of this.forest){
+        const dx=tree.x-team.x,dy=tree.y-team.y,d=dx*cos+dy*sin;
+        if(d<=.2)continue;
+        const height=tree.z*plane/d,width=height*.5,x=w/2+(-dx*sin+dy*cos)*plane/d-width/2,y=horizon+(eye-tree.z)*plane/d;
+        if(x+width<0||x>w||y>h||y+height<0)continue;
+        Object.assign(tree,{d,sx:x,sy:y,sw:width,sh:height});this.visibleTrees.push(tree);
+      }
+      this.visibleTrees.sort((a,b)=>b.d-a.d);
+    }
+    for(const t of this.visibleTrees){
+      c.globalAlpha=Math.max(.35,1-t.d/100);c.drawImage(this.trees[t.kind],t.sx,t.sy,t.sw,t.sh);
     }
     c.globalAlpha=1;
   }
   floor(c,team,w,h,plane,horizon,eye,upper){
+    if(!upper){
+      // The lower role cannot see ground details; no world-space pixel work needed.
+      const top=Math.max(0,horizon);if(top>=h)return;
+      const floor=c.createLinearGradient(0,top,0,h);floor.addColorStop(0,'#586970');floor.addColorStop(1,'#2a3940');
+      c.fillStyle=floor;c.fillRect(0,top,w,h-top);return;
+    }
     const target=this.floorCanvas,sw=Math.ceil(w/4),sh=Math.ceil(h/4);
     if(target.width!==sw||target.height!==sh){target.width=sw;target.height=sh;this.floorImage=target.getContext('2d').createImageData(sw,sh);}
     const image=this.floorImage,pixels=image.data,tex=this.groundPixels,cos=Math.cos(team.angle),sin=Math.sin(team.angle);
@@ -75,7 +91,7 @@ export class OutdoorEnvironment{
       for(let x=0;x<sw;x++){
         const side=(x*4-w/2)*depth/plane,wx=team.x+cos*depth-sin*side,wy=team.y+sin*depth+cos*side;
         const tx=((Math.floor(wx*60)%128)+128)%128,ty=((Math.floor(wy*60)%128)+128)%128,src=(ty*128+tx)*4,i=(y*sw+x)*4;
-        for(let ch=0;ch<3;ch++)pixels[i+ch]=upper?tex[src+ch]*(1-fog)+[151,162,143][ch]*fog:[42,57,64][ch]+fog*45;
+        pixels[i]=tex[src]*(1-fog)+151*fog;pixels[i+1]=tex[src+1]*(1-fog)+162*fog;pixels[i+2]=tex[src+2]*(1-fog)+143*fog;
         pixels[i+3]=255;
       }
     }
