@@ -1,183 +1,127 @@
 import {SLOTS,sanitizeInput} from './engine.js?v=20261013-2';
-import {peerOptions,iceServersUrl} from '../network-config.js?v=20261013-3';
+import {mqttBrokers} from '../network-config.js?v=mqtt-1';
 
-const PREFIX='split-signal-v5-';
 let libraryPromise;
-function loadPeer(){
-  if(globalThis.Peer)return Promise.resolve(globalThis.Peer);
-  if(libraryPromise)return libraryPromise;
-  libraryPromise=new Promise((resolve,reject)=>{
-    const script=document.createElement('script');script.src='./vendor/peerjs.min.js';
-    const timer=setTimeout(()=>fail(),12000);
-    function fail(){clearTimeout(timer);script.remove();libraryPromise=null;reject(new Error('通信ライブラリを読み込めません。ページを再読み込みしてください。'));}
-    script.onload=()=>{clearTimeout(timer);globalThis.Peer?resolve(globalThis.Peer):fail();};script.onerror=fail;
-    document.head.append(script);
+async function loadMqtt(){
+  if(globalThis.mqtt)return globalThis.mqtt;
+  if(!libraryPromise)libraryPromise=new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src=new URL('../vendor/mqtt.min.js',import.meta.url).href;
+    const timer=setTimeout(fail,12000);
+    function fail(){clearTimeout(timer);script.remove();libraryPromise=null;reject(new Error('[MQTT_LIBRARY] 通信ライブラリを読み込めません。再読み込みしてください。'));}
+    script.onerror=fail;script.onload=()=>{clearTimeout(timer);globalThis.mqtt?resolve(globalThis.mqtt):fail();};document.head.append(script);
   });
   return libraryPromise;
 }
 const cleanName=name=>typeof name==='string'?name.trim().slice(0,16)||'パイロット':'パイロット';
-const peerError=error=>({
-  'peer-unavailable':'[ROOM_NOT_FOUND] ルームが見つかりません。ホストがルームを開いたままか確認し、全員でページを再読み込みして新しい招待URLを共有してください。',
-  'unavailable-id':'コードが使用中です。もう一度ルームを作成してください。',
-  'network':'[SIGNALING_ERROR] 接続サーバーに到達できません。ネットワークを確認してください。',
-  'server-error':'[SIGNALING_ERROR] 接続サーバーでエラーが発生しました。少し待ってからやり直してください。',
-  'socket-error':'[SIGNALING_ERROR] 接続サーバーとの通信に失敗しました。',
-  'webrtc':'[P2P_FAILED] プレイヤー間の通信経路を確立できません。別回線で試すか、公開者がTURN中継を設定する必要があります。',
-  'browser-incompatible':'このブラウザはWebRTCに対応していません。Chromeなどで開いてください。',
-}[error.type]||`接続エラー：${error.type||'unknown'}`);
-
-async function connectionOptions(){
-  const overrides={...peerOptions,...(globalThis.SPLIT_SIGNAL_PEER_OPTIONS||{})};
-  // PeerJS 1.5.5 includes discontinued PeerJS TURN servers in its defaults.
-  const config={iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}],...overrides.config};
-  if(iceServersUrl){
-    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
-    try{
-      const response=await fetch(iceServersUrl,{signal:controller.signal,cache:'no-store',credentials:'omit'});
-      if(!response.ok)throw new Error();
-      const data=await response.json(),servers=Array.isArray(data)?data:data.iceServers;
-      if(!Array.isArray(servers)||!servers.length||!servers.every(server=>{
-        const urls=Array.isArray(server?.urls)?server.urls:[server?.urls];
-        return urls.length&&urls.every(url=>typeof url==='string'&&/^(stun|stuns|turn|turns):/.test(url));
-      }))throw new Error();
-      config.iceServers=[...config.iceServers,...servers];
-    }catch{
-      throw new Error('[TURN_CONFIG] 中継設定を取得できません。公開者がnetwork-config.jsの取得先と設定を確認してください。');
-    }finally{clearTimeout(timer);}
-  }
-  return {debug:0,...overrides,config};
+class Channel{
+  constructor(room,id,name){this.room=room;this.peer=id;this.open=true;this.last=performance.now();this.events={};this.metadata={game:'split-signal',version:5,name};}
+  on(event,fn){(this.events[event]??=[]).push(fn);}
+  emit(event,data){for(const fn of this.events[event]||[])fn(data);}
+  send(data){this.room.publish(data.type,data,this.peer);}
+  close(){if(!this.open)return;this.open=false;this.emit('close');}
 }
-
-export class Room {
+export class Room{
   constructor(callbacks={}){
     this.callbacks=callbacks;this.players=[];this.connections=new Map();this.inputs={};this.lastInput={};
-    this.isHost=false;this.closed=false;this.slot=null;this.id=null;this.code='';this.lastStateAt=0;
-    this.reconnectAttempts=0;
+    this.clients=[];this.readyClients=new Set();this.seen=new Map();this.seq=0;this.departed=new Set();
+    this.isHost=false;this.closed=false;this.slot=null;this.lastStateAt=0;this.joined=false;
   }
   async open(host,code,name){
-    this.isHost=host;this.code=code;this.name=cleanName(name);
-    const [Peer,options]=await Promise.all([loadPeer(),connectionOptions()]);
-    if(this.closed)throw new Error('接続はキャンセルされました。');
-    this.hasRelay=options.config.iceServers.some(server=>(Array.isArray(server.urls)?server.urls:[server.urls]).some(url=>/^turns?:/.test(url)));
-    this.peer=host?new Peer(PREFIX+code,options):new Peer(options);
+    this.isHost=host;this.code=code;this.name=cleanName(name);this.id=crypto.randomUUID();
+    this.topic=`split-signal/mqtt-v1/${code}/messages`;
+    const mqtt=await loadMqtt();if(this.closed)throw new Error('接続はキャンセルされました。');
+    const brokers=globalThis.SPLIT_SIGNAL_MQTT_BROKERS||mqttBrokers;
+    if(!Array.isArray(brokers)||!brokers.length)throw new Error('[MQTT_CONFIG] 接続先が設定されていません。');
     return new Promise((resolve,reject)=>{
-      let settled=false,initialized=false,joinAttempts=0;
-      const fail=error=>{
-        if(this.closed)return;
-        if(!settled){settled=true;reject(error);this.close();}
-        else this.callbacks.onError?.(error.message);
-      };
-      this.cancelOpen=()=>{if(!settled){settled=true;reject(new Error('接続はキャンセルされました。'));}};
-      const deadline=(ms,message)=>{clearTimeout(this.openTimer);this.openTimer=setTimeout(()=>fail(new Error(typeof message==='function'?message():message)),ms);};
-      const ready=()=>{if(!settled){settled=true;clearTimeout(this.openTimer);resolve(this);}};
-      deadline(20000,'[SIGNALING_TIMEOUT] 接続サーバーの応答がありません。インターネット接続を確認するか、別回線で試してください。');
-      this.callbacks.onStatus?.('接続サーバーに接続しています…');
-      const join=()=>{
-        if(this.closed)return;
-        if(!this.peer.open){this.joinTimer=setTimeout(join,1000);return;}
-        joinAttempts++;
-        this.callbacks.onStatus?.('ホストを探して、プレイヤー間の通信経路を確認しています…');
-        const connection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:5,name:this.name}});
-        this.hostConnection=connection;
-        connection.on('open',()=>{
-          if(this.closed||settled||this.hostConnection!==connection)return;
-          this.callbacks.onStatus?.('通信経路がつながりました。入室情報を確認しています…');
-          // Request a fresh roster after the guest's channel is ready.
-          this.safeSend(connection,{type:'hello'});
-          clearInterval(this.rosterTimer);
-          this.rosterTimer=setInterval(()=>{
-            if(!this.closed&&!settled&&this.hostConnection===connection)this.safeSend(connection,{type:'hello'});
-          },1500);
+      this.rejectOpen=reject;
+      this.finishOpen=()=>{if(this.joined||this.closed)return;this.joined=true;clearTimeout(this.deadline);this.rejectOpen=null;resolve(this);};
+      this.deadline=setTimeout(()=>this.fail('[MQTT_TIMEOUT] 中継サーバーに接続できません。学校の回線制限とインターネット接続を確認してください。'),20000);
+      this.callbacks.onStatus?.('中継サーバーに接続しています…');
+      for(const url of brokers){
+        const client=mqtt.connect(url,{clientId:`ss-${crypto.randomUUID()}`,clean:true,reconnectPeriod:2000,connectTimeout:8000,keepalive:20,queueQoSZero:false,resubscribe:false});
+        this.clients.push(client);
+        client.on('error',()=>{});
+        client.on('connect',()=>{
+          if(this.closed)return;
+          client.subscribe(this.topic,{qos:0},(error,grants)=>{
+            if(this.closed||!client.connected||error||!grants?.length||grants.some(g=>g.qos===128))return;
+            this.readyClients.add(client);
+            this.callbacks.onStatus?.(`中継サーバーに接続しました（${this.readyClients.size}/${brokers.length}）。${host?'参加を受け付けています。':'ルームを探しています…'}`);
+            if(!this.started){
+              this.started=true;clearTimeout(this.deadline);
+              if(host){this.slot='a-lower';this.players=[{id:this.id,name:this.name,slot:this.slot,host:true}];this.finishOpen();}
+              else this.deadline=setTimeout(()=>this.fail(`[ROOM_TIMEOUT] 中継には接続できましたが、ホストから入室情報が届きません（接続先 ${this.readyClients.size}/${brokers.length}）。同じ最新版のページとコードか確認し、ホストのタブを開いたままにしてください。`),30000);
+              this.heartbeat=setInterval(()=>this.tick(),1000);
+            }
+            this.announce();
+          });
         });
-        connection.on('data',data=>{
-          if(!data||typeof data!=='object'||this.closed||this.hostConnection!==connection)return;
-          if(data.type==='reject'){fail(new Error(data.message));return;}
-          if(data.type==='roster'&&Array.isArray(data.players)){
-            this.players=data.players;this.slot=this.players.find(p=>p.id===this.id)?.slot||null;
-            if(!this.slot)return;
-            clearInterval(this.rosterTimer);this.callbacks.onRoster?.(this.players);ready();
-          }
-          if(data.type==='state'&&this.slot){this.lastStateAt=performance.now();this.callbacks.onState?.(data.state);}
-          if(data.type==='notice')this.callbacks.onError?.(data.message);
-        });
-        connection.on('iceStateChanged',state=>{
-          if(this.closed||this.hostConnection!==connection)return;
-          if(state==='checking')this.callbacks.onStatus?.('ホストが応答しました。プレイヤー間の接続を確立しています…');
-        });
-        connection.on('close',()=>{
-          if(this.closed||this.hostConnection!==connection)return;
-          if(!settled)fail(new Error(peerError({type:'webrtc'})));
-          else this.callbacks.onClosed?.('ホストとの接続が切れました。ロビーから入り直してください。');
-        });
-        connection.on('error',()=>{
-          if(this.hostConnection===connection)fail(new Error(peerError({type:'webrtc'})));
-        });
-      };
-      this.peer.on('error',e=>{
-        if(this.closed)return;
-        if(e.type==='peer-unavailable'&&!host&&!settled){
-          // The host may be re-registering after a short signaling outage.
-          const previous=this.hostConnection;this.hostConnection=null;previous?.close();
-          if(joinAttempts<4){
-            this.callbacks.onStatus?.('ホストの再接続を待っています…');
-            clearTimeout(this.joinTimer);this.joinTimer=setTimeout(join,2000);return;
-          }
-        }
-        if(initialized&&['network','socket-error','server-error','disconnected'].includes(e.type)){
-          this.scheduleReconnect();return;
-        }
-        fail(new Error(peerError(e)));
-      });
-      this.peer.on('disconnected',()=>{
-        if(this.closed)return;
-        this.callbacks.onError?.('接続サーバーへ再接続しています。ホストのタブを開いたままお待ちください。');
-        this.scheduleReconnect();
-      });
-      this.wake=()=>{
-        if(!this.closed&&!this.peer.open){this.reconnectAttempts=0;this.scheduleReconnect();}
-      };
-      globalThis.addEventListener?.('online',this.wake);
-      globalThis.addEventListener?.('focus',this.wake);
-      if(host)this.peer.on('connection',c=>this.accept(c));
-      this.peer.on('open',id=>{
-        if(this.closed)return;
-        clearTimeout(this.reconnectTimer);this.reconnectTimer=null;
-        const recovering=this.reconnectAttempts>0;this.reconnectAttempts=0;
-        if(recovering)this.callbacks.onStatus?.('接続サーバーへの再接続が完了しました。参加を受け付けています。');
-        // PeerJS emits open again after reconnect. Never reset a live roster.
-        if(initialized)return;
-        initialized=true;
-        this.id=id;
-        if(host){
-          this.slot='a-lower';this.players=[{id,name:this.name,slot:this.slot,host:true}];
-          this.publishRoster();ready();
-        }else{
-          deadline(45000,()=>this.joinFailure());
-          join();
-        }
-      });
+        client.on('close',()=>{this.readyClients.delete(client);if(!this.closed&&!this.readyClients.size)this.callbacks.onError?.('中継サーバーへ再接続しています…');});
+        client.on('message',(topic,bytes,packet)=>{if(topic===this.topic&&!packet?.retain)this.receive(bytes);});
+      }
     });
   }
-  joinFailure(){
-    const connection=this.hostConnection;
-    if(connection?.open)return '[JOIN_TIMEOUT] 通信は成立しましたが入室情報を受信できません。全員がページを再読み込みし、ルームを作り直してください。';
-    const ice=connection?.peerConnection?.iceConnectionState||'unknown';
-    return `[P2P_TIMEOUT] プレイヤー間の通信経路を確立できませんでした（ICE: ${ice} / TURN: ${this.hasRelay?'設定あり':'未設定'}）。`+
-      (this.hasRelay?'中継サーバーの認証・到達性と両者の回線を確認してください。':'直接接続できない回線にはTURN中継の設定が必要です。まず同じWi-Fiで接続できるか確認してください。');
+  fail(message){
+    const reject=this.rejectOpen;this.rejectOpen=null;
+    if(reject){reject(new Error(message));this.close();}
+    else{this.close();this.callbacks.onClosed?.(message);}
   }
-  scheduleReconnect(){
-    if(this.closed||this.reconnectTimer)return;
-    if(this.peer.destroyed||this.reconnectAttempts>=6){
-      this.callbacks.onError?.('[SIGNALING_LOST] 接続サーバーに復帰できません。既存の対戦は続けられますが、新規参加には回線を確認してルームを作り直してください。');return;
+  publish(kind,data,to='*'){
+    if(this.closed)return;
+    const payload=JSON.stringify({v:1,from:this.id,to,seq:++this.seq,kind,data});
+    for(const client of this.readyClients){
+      if(!client.connected)continue;
+      // Do not accumulate old movement/snapshots when a socket stalls.
+      if((client.stream?.socket?.bufferedAmount||0)>128000)continue;
+      client.publish(this.topic,payload,{qos:0,retain:false});
     }
-    this.reconnectTimer=setTimeout(()=>{
-      this.reconnectTimer=null;
-      if(this.closed||this.peer.open)return;
-      this.reconnectAttempts++;
-      if(!this.peer.disconnected)this.peer.disconnect();
-      try{this.peer.reconnect();}catch{/* Retry within the same bounded budget. */}
-      this.scheduleReconnect();
-    },Math.min(1000*2**this.reconnectAttempts,8000));
+  }
+  announce(){
+    if(this.isHost)this.publishRoster();
+    else this.publish('join',{name:this.name},this.hostId||'*');
+  }
+  tick(){
+    if(this.closed)return;
+    const now=performance.now();
+    if(this.isHost){for(const c of this.connections.values())if(now-c.last>15000)c.close();}
+    else if(this.joined&&now-this.lastHostAt>20000){this.fail('ホストとの通信が20秒間途絶えました。ロビーから入り直してください。');return;}
+    this.announce();
+  }
+  receive(bytes){
+    if(this.closed||bytes.length>250000)return;
+    let m;try{m=JSON.parse(bytes.toString());}catch{return;}
+    if(!m||m.v!==1||typeof m.from!=='string'||m.from===this.id||!Number.isSafeInteger(m.seq)||m.seq<1||typeof m.kind!=='string'||!m.data||typeof m.data!=='object'||(m.to!=='*'&&m.to!==this.id))return;
+    const key=`${m.from}:${m.kind}`;
+    if(m.seq<=(this.seen.get(key)||0))return;
+    this.seen.set(key,m.seq);if(this.seen.size>2048)this.seen.delete(this.seen.keys().next().value);
+    if(this.isHost){
+      if(m.kind==='roster'&&m.data.players?.some(p=>p.host&&p.id===m.from)){this.fail('[ROOM_IN_USE] 同じコードのルームが存在します。ルームを作り直してください。');return;}
+      let c=this.connections.get(m.from);
+      if(m.kind==='join'){
+        if(this.departed.has(m.from))return;
+        if(!c){c=new Channel(this,m.from,m.data.name);this.accept(c);c.emit('open');}
+        else this.safeSend(c,{type:'roster',players:this.players});
+        c.last=performance.now();return;
+      }
+      if(!c)return;c.last=performance.now();
+      if(m.kind==='leave'){this.departed.add(m.from);c.close();return;}
+      c.emit('data',{...m.data,type:m.kind});return;
+    }
+    if(this.hostId&&m.from!==this.hostId)return;
+    if(m.kind==='roster'){
+      const players=m.data.players;
+      if(!Array.isArray(players)||players.length>4||!players.every(p=>p&&typeof p.id==='string'&&typeof p.name==='string'&&SLOTS.includes(p.slot))||new Set(players.map(p=>p.slot)).size!==players.length||new Set(players.map(p=>p.id)).size!==players.length||players.filter(p=>p.host).length!==1||!players.some(p=>p.host&&p.id===m.from))return;
+      this.hostId=m.from;this.lastHostAt=performance.now();
+      const me=players.find(p=>p.id===this.id);if(!me){this.announce();return;}
+      this.hostConnection??=new Channel(this,this.hostId,'Host');
+      this.players=players;this.slot=me.slot;this.callbacks.onRoster?.(players);this.finishOpen();return;
+    }
+    if(m.kind==='reject'&&!this.joined){this.fail(m.data.message||'入室できません。');return;}
+    if(!this.hostId||m.from!==this.hostId)return;
+    this.lastHostAt=performance.now();
+    if(m.kind==='leave'){this.fail('ホストがルームを閉じました。');return;}
+    if(m.kind==='state'&&this.slot){this.lastStateAt=performance.now();this.callbacks.onState?.(m.data.state);}
   }
   accept(connection){
     connection.on('open',()=>{
@@ -224,7 +168,7 @@ export class Room {
   publishRoster(){
     const players=this.players.map(({id,name,slot,host})=>({id,name,slot,host}));
     this.slot=players.find(p=>p.id===this.id)?.slot||this.slot;
-    for(const c of this.connections.values())this.safeSend(c,{type:'roster',players});
+    this.publish('roster',{type:'roster',players});
     this.callbacks.onRoster?.(players);
   }
   claimFor(id,slot){
@@ -236,7 +180,7 @@ export class Room {
   sendInput(input){this.safeSend(this.hostConnection,{type:'input',input});}
   signal(index){if(this.isHost)this.callbacks.onSignal?.(this.slot,index);else this.safeSend(this.hostConnection,{type:'signal',index});}
   ping(){if(this.isHost)this.callbacks.onPing?.(this.slot);else this.safeSend(this.hostConnection,{type:'ping'});}
-  broadcastState(state){for(const c of this.connections.values())this.safeSend(c,{type:'state',state});}
+  broadcastState(state){this.publish('state',{type:'state',state});}
   readInputs(){
     const now=performance.now(),result={};
     for(const [slot,input]of Object.entries(this.inputs)){
@@ -247,14 +191,14 @@ export class Room {
     return result;
   }
   close(){
-    this.closed=true;this.cancelOpen?.();
-    clearInterval(this.rosterTimer);clearTimeout(this.openTimer);clearTimeout(this.joinTimer);clearTimeout(this.reconnectTimer);
-    globalThis.removeEventListener?.('online',this.wake);globalThis.removeEventListener?.('focus',this.wake);
-    this.hostConnection?.close();for(const c of this.connections.values())c.close();
-    this.peer?.destroy();this.connections.clear();this.players=[];this.inputs={};
+    if(this.closed)return;
+    this.publish('leave',{},this.isHost?'*':this.hostId||'*');
+    this.closed=true;this.rejectOpen?.(new Error('接続はキャンセルされました。'));this.rejectOpen=null;
+    clearTimeout(this.deadline);clearInterval(this.heartbeat);
+    for(const client of this.clients)client.end(true);
+    this.readyClients.clear();this.connections.clear();this.players=[];this.inputs={};
   }
 }
-
 export function generateCode(){
   const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',bytes=crypto.getRandomValues(new Uint8Array(6));
   return [...bytes].map(b=>alphabet[b%alphabet.length]).join('');

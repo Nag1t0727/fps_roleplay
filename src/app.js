@@ -1,6 +1,6 @@
 import {createState,step,blankInput,addSignal,placePing,SLOTS,SLOT_LABELS,ROUND_COUNT,ITEM_INFO} from './engine.js?v=20261013-2';
 import {Renderer} from './renderer.js?v=20261013-2';
-import {Room,generateCode} from './network.js?v=20261013-3';
+import {Room,generateCode} from './network.js?v=mqtt-1';
 
 const $=id=>document.getElementById(id),renderer=new Renderer($('viewport'),$('body-preview'));
 let room=null,state=null,slot='a-lower',solo=false,inGame=false,connecting=false;
@@ -20,7 +20,7 @@ async function connect(host){
   if(!/^[A-Z0-9]{6}$/.test(code)){status('6桁のルームコードを入力してください。',true);return;}
   const name=$('player-name').value.trim()||'パイロット';
   try{localStorage.setItem('split-signal-name',name);}catch{}
-  setConnecting(true);status(host?'ルームを作成しています…':'ホストとP2P接続しています…');
+  setConnecting(true);status(host?'ルームを作成しています…':'中継サーバー経由でホストに接続しています…');
   const session=new Room({
     onRoster:()=>{if(room!==session)return;slot=session.slot||slot;renderRoom();if(inGame)configureRole();},
     onState:next=>{if(room!==session)return;state=next;if(!inGame)enterGame(false);},
@@ -161,7 +161,7 @@ function updateHUD(){
     const crew=document.createElement('p');crew.textContent=solo?'ひとり練習 / Tabで役割切替':room?.players.filter(p=>p.slot[0]===t.id).map(p=>p.name).join(' + ')||'接続待ち';
     card.append(header,track,crew);$('team-status').append(card);
   }
-  $('game-network').textContent=solo?'● LOCAL SIMULATION':networkIssue?'△ 通信状況を確認してください':`● P2P ${room?.players.length||0}/4 · ${room?.isHost?'HOST':'CONNECTED'}`;
+  $('game-network').textContent=solo?'● LOCAL SIMULATION':networkIssue?'△ 通信状況を確認してください':`● MQTT ${room?.players.length||0}/4 · ${room?.isHost?'HOST':'CONNECTED'}`;
   $('game-network').title=networkIssue;
   if(state.status!=='playing')showResult();
   else if(resultShown){resultShown=false;$('result').hidden=true;clearControls();$('viewport').focus({preventScroll:true});}
@@ -222,7 +222,7 @@ $('retry').addEventListener('click',()=>{if(solo)enterGame(true);else startMissi
 $('signal-one').addEventListener('click',()=>sendSignal(0));$('signal-two').addEventListener('click',()=>sendSignal(1));
 $('ping-button').addEventListener('click',sendPing);
 $('copy-room').addEventListener('click',async()=>{
-  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','20261013-2');url.hash=`room=${room.code}`;
+  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','mqtt-1');url.hash=`room=${room.code}`;
   try{await navigator.clipboard.writeText(url.href);status('招待URLをコピーしました。3人に共有してください。');}catch{status(`コピーできませんでした。コード ${room.code} を共有してください。`);}
 });
 $('toggle-help').addEventListener('click',()=>{clearControls();document.exitPointerLock?.();$('help-dialog').showModal();});
