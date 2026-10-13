@@ -195,7 +195,12 @@ export class Room{
     this.publish('leave',{},this.isHost?'*':this.hostId||'*');
     this.closed=true;this.rejectOpen?.(new Error('接続はキャンセルされました。'));this.rejectOpen=null;
     clearTimeout(this.deadline);clearInterval(this.heartbeat);
-    for(const client of this.clients)client.end(true);
+    for(const client of this.clients){
+      if(!client.connected){client.end(true);continue;}
+      // Flush the leave packet before closing the WebSocket.
+      const timer=setTimeout(()=>client.end(true),1500);timer.unref?.();
+      client.end(false,()=>clearTimeout(timer));
+    }
     this.readyClients.clear();this.connections.clear();this.players=[];this.inputs={};
   }
 }

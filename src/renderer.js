@@ -1,4 +1,5 @@
 import {MAP,WIDTH,HEIGHT,HAZARDS,EXIT,raycast,normalizeAngle,distance,EYE_HEIGHT,WALL_HEIGHT,ROBOT_HEIGHT,ITEM_INFO} from './engine.js?v=20261013-2';
+import {OutdoorEnvironment} from './environment.js?v=forest-1';
 import {drawHumanoid} from './humanoid.js';
 
 export function visibleEntities(state,slot){
@@ -16,20 +17,18 @@ export const visiblePings=(state,slot)=>(state.pings||[]).filter(p=>p.team===slo
 export const visibleScans=(state,slot)=>state.teams.find(t=>t.id===slot[0])?.scans.filter(p=>p.life>0)||[];
 
 export class Renderer {
-  constructor(canvas,bodyCanvas=null){this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});this.bodyCanvas=bodyCanvas;this.depth=[];}
+  constructor(canvas,bodyCanvas=null){this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});this.bodyCanvas=bodyCanvas;this.depth=[];this.environment=new OutdoorEnvironment(WIDTH,HEIGHT);}
   draw(state,slot){
     const {ctx:c,canvas}=this;
     const w=canvas.width,h=canvas.height,upper=slot.endsWith('upper')||state.teams.find(t=>t.id===slot[0])?.link>0;
     const team=state.teams.find(t=>t.id===slot[0])||state.teams[0];
     const plane=w*.72,horizon=h*.5+Math.tan(team.pitch)*plane;
     this.horizon=horizon;
-    const sky=c.createLinearGradient(0,0,0,horizon);sky.addColorStop(0,upper?'#101e1c':'#0d1520');sky.addColorStop(1,upper?'#243d32':'#1e2632');
-    c.fillStyle=sky;c.fillRect(0,0,w,h);
-    const floor=c.createLinearGradient(0,horizon,0,Math.max(h,horizon+1));floor.addColorStop(0,'#18261e');floor.addColorStop(1,upper?'#293128':'#101921');c.fillStyle=floor;c.fillRect(0,Math.max(0,horizon),w,Math.max(0,h-Math.max(0,horizon)));
+    this.environment.draw(c,team,w,h,plane,horizon,EYE_HEIGHT,upper);
     // Project floor tiles in world space, then let the depth-correct walls occlude them.
     if(upper){
       for(let y=1;y<HEIGHT-1;y++)for(let x=1;x<WIDTH-1;x++){
-        if(MAP[y][x]==='0'&&Math.hypot(x-team.x,y-team.y)<15)this.floorTile(team,x,y,plane,w,h,'#72876620',true);
+        if(MAP[y][x]==='0'&&Math.hypot(x-team.x,y-team.y)<15)this.floorTile(team,x,y,plane,w,h,((x*13+y*7)%11===0)?'#393b3018':'#72726308');
       }
       for(const hazard of HAZARDS)this.floorTile(team,hazard.x,hazard.y,plane,w,h,'#cc573c99');
       if(state.mode!=='duel')for(let y=1;y<=3;y++)for(let x=16;x<=18;x++)this.floorTile(team,x,y,plane,w,h,state.collected===4?'#d6fa7080':'#548f8944');
@@ -44,13 +43,12 @@ export class Renderer {
       const wallH=WALL_HEIGHT*plane/depth,top=horizon-(WALL_HEIGHT-EYE_HEIGHT)*plane/depth;
       const light=Math.max(.14,1-depth/19)*(ray.side?.73:1);
       if(upper){
-        const face=(ray.side?ray.x:ray.y)%1;
-        const seam=face<.035||face>.965;
-        c.fillStyle=seam?`rgb(${23*light},${37*light},${31*light})`:`rgb(${83*light},${111*light},${91*light})`;
-        c.fillRect(x,top,2,wallH);
-        c.fillStyle=`rgba(195,225,167,${light*.2})`;c.fillRect(x,top+wallH*.08,2,Math.max(1,wallH*.012));
-        c.fillStyle=`rgba(12,27,20,${light*.7})`;c.fillRect(x,top+wallH*.7,2,Math.max(1,wallH*.018));
-        c.fillStyle=`rgba(214,250,112,${light*.5})`;c.fillRect(x,top+wallH*.88,2,Math.max(1,wallH*.012));
+        const coordinate=ray.side?ray.x:ray.y,face=coordinate-Math.floor(coordinate);
+        c.drawImage(this.environment.wall,Math.floor(face*255),0,1,256,x,top,2,wallH);
+        const shade=(ray.side?.18:.04)+Math.min(.46,depth/45);
+        c.fillStyle=`rgba(35,47,38,${shade})`;c.fillRect(x,top,2,wallH);
+        c.fillStyle='#d3d0b68c';c.fillRect(x,top,2,Math.max(1,wallH*.018));
+        c.fillStyle='#303d2a44';c.fillRect(x,top+wallH*.92,2,wallH*.08);
       }else{
         c.fillStyle=`rgb(${12+10*light},${21+15*light},${30+20*light})`;c.fillRect(x,top,2,wallH);
         c.fillStyle='#405a6b35';c.fillRect(x,top,2,1);c.fillRect(x,top+wallH,2,1);
@@ -63,9 +61,9 @@ export class Renderer {
     const firing=state.shots.some(s=>s.team===team.id&&s.life>.07);
     const bob=Math.sin(team.gait)*team.moveSpeed*6;
     this.drawHands(w,h,bob,firing);
-    c.fillStyle=upper?'#48533f':'#2c3943';
+    const weapon=c.createLinearGradient(w*.54,0,w*.67,0);weapon.addColorStop(0,'#1c2524');weapon.addColorStop(.35,'#57605b');weapon.addColorStop(.5,'#3f4742');weapon.addColorStop(1,'#151c1d');c.fillStyle=weapon;
     c.beginPath();c.moveTo(w*.57,h);c.lineTo(w*.57,h*.86+bob);c.lineTo(w*.54,h*.82+bob);c.lineTo(w*.54,h*.71+bob);c.lineTo(w*.59,h*.68+bob);c.lineTo(w*.64,h*.72+bob);c.lineTo(w*.67,h);c.fill();
-    c.strokeStyle=upper?'#9eaf7d':'#5e7b91';c.lineWidth=2;c.stroke();
+    c.strokeStyle=upper?'#919789':'#5e7b91';c.lineWidth=2;c.stroke();
     c.fillStyle='#131e16';c.fillRect(w*.565,h*.725+bob,w*.045,h*.045);c.fillStyle='#d6fa70';c.fillRect(w*.575,h*.737+bob,w*.025,3);
     if(firing){c.fillStyle='#e5ffb2';c.beginPath();c.moveTo(w*.56,h*.69);c.lineTo(w*.52,h*.58);c.lineTo(w*.585,h*.63);c.lineTo(w*.62,h*.57);c.lineTo(w*.625,h*.7);c.fill();c.fillStyle='#d6fa7012';c.fillRect(0,0,w,h);}
     if(upper)this.minimap(state,team,w,h);
@@ -76,7 +74,7 @@ export class Renderer {
     if(this.bodyCanvas)this.bodyPreview(team,firing);
     if(team.hurt>0){c.fillStyle=`rgba(218,55,38,${team.hurt*.5})`;c.fillRect(0,0,w,h);}
     if(team.hp<=0){c.fillStyle='#09100dde';c.fillRect(0,0,w,h);c.textAlign='center';c.fillStyle='#e5b18b';c.font='24px sans-serif';c.fillText('機体停止',w/2,h/2);c.textAlign='left';}
-    const vignette=c.createRadialGradient(w/2,h/2,h*.18,w/2,h/2,w*.65);vignette.addColorStop(0,'transparent');vignette.addColorStop(1,'#0009');c.fillStyle=vignette;c.fillRect(0,0,w,h);
+    const vignette=c.createRadialGradient(w/2,h/2,h*.18,w/2,h/2,w*.65);vignette.addColorStop(0,'transparent');vignette.addColorStop(1,'#101a183d');c.fillStyle=vignette;c.fillRect(0,0,w,h);
   }
   pingMarker(ping,team,plane,w,h){
     const c=this.ctx,angle=normalizeAngle(Math.atan2(ping.y-team.y,ping.x-team.x)-team.angle);

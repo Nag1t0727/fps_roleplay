@@ -1,5 +1,5 @@
 import {createState,step,blankInput,addSignal,placePing,SLOTS,SLOT_LABELS,ROUND_COUNT,ITEM_INFO} from './engine.js?v=20261013-2';
-import {Renderer} from './renderer.js?v=20261013-2';
+import {Renderer} from './renderer.js?v=forest-1';
 import {Room,generateCode} from './network.js?v=mqtt-1';
 
 const $=id=>document.getElementById(id),renderer=new Renderer($('viewport'),$('body-preview'));

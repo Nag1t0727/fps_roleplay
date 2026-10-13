@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './mqtt-fixture.js';
 
 test('practice: movement, role separation, turning, signals, help and return to lobby',async({page})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -45,7 +45,7 @@ test('mobile landing page fits viewport and practice remains accessible',async({
   await expect(page.locator('#viewport')).toBeVisible();
 });
 
-test('real PeerJS: four browsers connect, role input synchronizes, capacity and reconnect work',async({browser})=>{
+test('MQTT: four browsers connect, role input synchronizes, capacity and reconnect work',async({browser})=>{
   test.setTimeout(150000);
   const contexts=[],pages=[],errors=[];
   try{
@@ -96,7 +96,7 @@ test('real PeerJS: four browsers connect, role input synchronizes, capacity and 
     await expect(host.locator('#game-network')).toContainText('4/4');
     await host.getByRole('button',{name:'ロビーへ',exact:true}).click();
     await expect(pages[1].locator('#lobby')).toBeVisible();
-    await expect(pages[1].locator('#connection-status')).toContainText('ホストとの接続が切れました');
+    await expect(pages[1].locator('#connection-status')).toContainText('ホストがルームを閉じました');
     expect(errors).toEqual([]);
   }finally{for(const context of contexts)await context.close();}
 });
