@@ -7,7 +7,7 @@
   <meta name="description" content="4人、2つの身体、全3ラウンド。2人で1体を操作する2対2の対戦FPS。">
   <title>SPLIT SIGNAL — ふたりで、ひとつの視界へ。</title>
   <link rel="icon" type="image/svg+xml" href="./assets/split-brain.svg?v=brain-eye">
-  <link rel="stylesheet" href="./style.css?v=20261013-brain">
+  <link rel="stylesheet" href="./style.css?v=20261013-video">
 </head>
 <body>
   <header class="site-header">
@@ -16,10 +16,17 @@
   </header>
 
   <main id="lobby" class="lobby">
+    <div class="lobby-backdrop" aria-hidden="true">
+      <video id="lobby-video" muted loop playsinline preload="metadata" poster="./assets/duel-demo-poster.jpg?v=three-shots" tabindex="-1">
+        <source src="./assets/duel-demo.mp4?v=three-shots" type="video/mp4">
+        <source src="./assets/duel-demo.webm?v=three-shots" type="video/webm">
+      </video>
+    </div>
     <section class="intro">
       <div class="eyebrow"><span>ASYMMETRIC PvP FPS</span><span>04 PLAYERS → 02 BODIES</span></div>
       <h1>ONE BODY.<br><span>TWO REALITIES.</span></h1>
       <div class="intro-bottom"><p>君に見えないものを、相棒が見ている。<br>2人で1体。全3ラウンドで競う、2対2の対戦FPS。</p><a href="#how-to" class="text-link">作戦を確認する <span>↙</span></a></div>
+      <div class="lobby-video-controls"><button id="lobby-video-toggle" class="text-link" type="button">背景動画を再生</button><a class="text-link" href="./demo/">12秒の動画を見る ↗</a><span id="lobby-video-status" role="status"></span></div>
     </section>
 
     <div class="main-grid">
@@ -160,6 +167,7 @@
     <div class="game-footer"><span id="game-network">● LOCAL SIMULATION</span><span>音声通話で連携しよう · Escでマウスを解放</span><button id="toggle-help" class="text-link">操作説明</button></div>
     <dialog id="help-dialog"><h2>ふたりで動かす、ひとつの身体。</h2><p>下半身：WASDで視線を基準に前後・左右へ移動。Wは画面の正面へ進みます。上半身：マウスまたは矢印キーで照準を上下左右へ動かし、クリックかSpaceで射撃。首は左右360°、上下60°まで動きます。視線の水平な向きに身体と移動方向が追従します。Gで照準先にピンを置けます。最初はすぐ使用可能、次は15秒後。ピンは自分と相棒に6秒間表示され、敵を自動追尾しません。Q / Eは相棒だけへの合図。</p><p>対戦は全3ラウンド、各90秒。相手を倒すか、時間切れで残りHPが多い側が勝利。同じHP・同時撃破は引き分けです。射撃は25ダメージ、コアに触れると30回復。赤い床はダメージを受けます。ラウンド間は5秒待ち、開始位置を交代してHPとコアをリセット。3ラウンド合計の勝利数で総合勝敗を決めます。</p><p>アイテムは触れると自動発動。修理はHPを30回復、シールドは8秒以内の敵の攻撃1回を防御、加速は6秒間1.3倍、視界リンクは3秒間2人とも全情報が見えます。スキャンは取得時の敵位置を3秒間表示し、追尾しません。赤い床のダメージはシールドでも防げません。</p><p>1人練習は脱出ルールです。6分以内にコア4個を回収して北東の出口へ。Tabで役割を切り替えます。自動操作の相棒はいません。上半身で向きを決め、下半身で移動してください。右下の自機モデルで四肢と首の向きを確認できます。</p><form method="dialog"><button class="button primary">了解</button></form></dialog>
   </main>
+  <script type="module" src="./src/lobby-video.js?v=20261013-1"></script>
   <script type="module" src="./src/app.js?v=20261013-2"></script>
 </body>
 </html>

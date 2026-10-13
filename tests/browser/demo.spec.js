@@ -23,3 +23,33 @@ test('recorded demo plays, pauses, and previews a readable translucent backgroun
   await expect(video).toHaveCSS('opacity','1');
   expect(errors).toEqual([]);
 });
+
+test('home page displays the movie and pauses it during practice',async({page})=>{
+  await page.goto('/');
+  const video=page.locator('#lobby-video');
+  await expect(video).toBeVisible();
+  await expect.poll(()=>video.evaluate(v=>v.currentTime)).toBeGreaterThan(.2);
+  expect(await video.evaluate(v=>v.muted&&v.loop&&v.playsInline)).toBe(true);
+  await page.getByRole('button',{name:'背景動画を一時停止',exact:true}).click();
+  expect(await video.evaluate(v=>v.paused)).toBe(true);
+  await page.screenshot({path:'test-results/lobby-video.png',fullPage:false});
+  await page.getByRole('button',{name:'背景動画を再生',exact:true}).click();
+  await expect.poll(()=>video.evaluate(v=>v.paused)).toBe(false);
+  await page.getByRole('button',{name:'ひとりで練習する',exact:true}).click();
+  await expect(video).toBeHidden();
+  await expect.poll(()=>video.evaluate(v=>v.paused)).toBe(true);
+});
+
+test('reduced motion keeps a poster and allows manual playback',async({page})=>{
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.setViewportSize({width:390,height:844});
+  await page.goto('/');
+  const video=page.locator('#lobby-video');
+  await expect(video).toBeVisible();
+  expect(await video.evaluate(v=>v.paused)).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(390);
+  await page.getByRole('button',{name:'背景動画を再生',exact:true}).click();
+  await expect.poll(()=>video.evaluate(v=>v.currentTime)).toBeGreaterThan(.2);
+  await page.getByRole('link',{name:'12秒の動画を見る'}).click();
+  await expect(page).toHaveURL(/\/demo\/$/);
+});
