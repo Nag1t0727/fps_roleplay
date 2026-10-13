@@ -1,6 +1,6 @@
-import {createState,step,blankInput,addSignal,SLOTS,SLOT_LABELS,ROUND_COUNT} from './engine.js';
-import {Renderer} from './renderer.js';
-import {Room,generateCode} from './network.js?v=20261012-1';
+import {createState,step,blankInput,addSignal,placePing,SLOTS,SLOT_LABELS,ROUND_COUNT,ITEM_INFO} from './engine.js?v=20261013-2';
+import {Renderer} from './renderer.js?v=20261013-2';
+import {Room,generateCode} from './network.js?v=20261013-2';
 
 const $=id=>document.getElementById(id),renderer=new Renderer($('viewport'),$('body-preview'));
 let room=null,state=null,slot='a-lower',solo=false,inGame=false,connecting=false;
@@ -25,6 +25,7 @@ async function connect(host){
     onRoster:()=>{if(room!==session)return;slot=session.slot||slot;renderRoom();if(inGame)configureRole();},
     onState:next=>{if(room!==session)return;state=next;if(!inGame)enterGame(false);},
     onSignal:(from,index)=>{if(state&&state.status==='playing')addSignal(state,from,index);},
+    onPing:from=>{if(state&&session.players.length===4)placePing(state,from);},
     onError:message=>{if(room!==session)return;networkIssue=message;status(message,true);},
     onStatus:message=>{if(room!==session)return;networkIssue='';status(message);},
     onClosed:message=>{if(room!==session)return;exitGame();leaveRoom();status(message,true);},
@@ -81,17 +82,18 @@ function configureRole(){
   $('vision-label').textContent=upper?'STRUCTURAL VISION':'BIOLOGICAL VISION';
   $('view-note').textContent=upper?(solo?'地形・危険な床・出口：可視 / 敵・コア：不可視':'地形・危険な床：可視 / 相手機体・回復コア：不可視'):(solo?'敵・コア：可視 / 地形の詳細：不可視':'相手機体・回復コア：可視 / 地形の詳細：不可視');
   $('control-title').textContent=upper?'照準・射撃を担当':'移動を担当';
-  $('control-description').textContent=upper?'マウスか矢印キーで首と照準を上下左右に動かす。首は360°回転。クリックかSpaceで射撃。身体の進行方向は変わりません。':`WASDで身体の向きに沿って移動。Z / Cまたは← →で身体を旋回。Wの方向は画面の矢印を確認。${solo?'コアは触れると回収。':'コアで30HP回復。'}`;
+  $('control-description').textContent=upper?'マウスか矢印キーで上下左右に照準。クリックかSpaceで射撃。Gで照準先にピン（15秒に1回）。視線の方向が相棒の前進方向です。':`Wで視線の方向へ前進、Sで後退、A / Dで左右へ移動。方向転換は上半身役の視点操作に追従。${solo?'コアは触れると回収。':'コアで30HP回復。'}`;
   $('control-keys').replaceChildren();
-  for(const key of upper?['←','→','↑','↓','SPACE','CLICK']:['W','A','S','D','Z','C']){const k=document.createElement('kbd');k.textContent=key;$('control-keys').append(k);}
+  for(const key of upper?['←','→','↑','↓','SPACE','G']:['W','A','S','D']){const k=document.createElement('kbd');k.textContent=key;$('control-keys').append(k);}
+  $('ping-button').hidden=!upper;
   $('signal-one').querySelector('span').textContent=upper?'進んで大丈夫':'正面に敵';
   $('signal-two').querySelector('span').textContent=upper?'止まって！':'コアが見える';
-  $('field-note').textContent=solo?'Tabで役割切替。首の向きとWの方向は別々。下半身のZ / Cで進路を決めよう。':upper?'首を回しても進路は変わりません。「身体を右へ」と言葉で伝えて相棒に曲がってもらおう。':'危険な床は相棒にしか見えません。Wの矢印と身体の方角を確認して進もう。';
+  $('field-note').textContent=solo?'Tabで役割切替。上半身で向きを決め、下半身のWでその方向へ進もう。':upper?'Gのピンで注意してほしい場所を共有。敵は見えないので相棒の報告を聞いて照準を合わせよう。':'相棒のピンは6秒間表示。危険な床は相棒にしか見えません。声を掛け合って進もう。';
   updatePointerHint();
 }
 function updatePointerHint(){
   const upper=slot.endsWith('upper');
-  $('canvas-hint').textContent=upper?(document.pointerLockElement?'マウス：上下左右の照準 / クリック：射撃 / Esc：解放':'クリックでマウス操作 / 矢印キー：上下左右 / Space：射撃'):(solo?'WASD：移動 / Z・C：身体旋回 / Tab：役割切替':'WASD：身体基準の移動 / Z・C または ← →：身体旋回');
+  $('canvas-hint').textContent=upper?(document.pointerLockElement?'マウス：照準 / クリック：射撃 / G：ピン / Esc：解放':'クリックでマウス操作 / 矢印キー：照準 / Space：射撃 / G：ピン'):(solo?'WASD：視線基準の移動 / Tab：役割切替':'WASD：視線基準の移動 / 相棒のピンを確認');
 }
 function readInput(){
   const input=blankInput();
@@ -104,13 +106,16 @@ function readInput(){
   }else{
     input.forward=(keys.has('KeyW')?1:0)-(keys.has('KeyS')?1:0);
     input.strafe=(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0);
-    input.bodyTurn=(keys.has('KeyC')||keys.has('ArrowRight')?1:0)-(keys.has('KeyZ')||keys.has('ArrowLeft')?1:0);
   }
   return input;
 }
 function sendSignal(index){
   if(!inGame||!state||state.status!=='playing'||performance.now()-lastSignal<650)return;
   lastSignal=performance.now();if(solo)addSignal(state,slot,index);else room?.signal(index);
+}
+function sendPing(){
+  if(!inGame||!state||state.status!=='playing'||!slot.endsWith('upper')||$('help-dialog').open)return;
+  if(solo)placePing(state,slot);else room?.ping();
 }
 function switchRole(){
   if(!solo||!inGame)return;clearControls();slot=slot.endsWith('lower')?'a-upper':'a-lower';
@@ -119,6 +124,13 @@ function switchRole(){
 
 function updateHUD(){
   const team=state.teams.find(t=>t.id===slot[0]);
+  const upper=slot.endsWith('upper'),linked=team.link>0;
+  $('vision-label').textContent=linked?'VISION LINK / 両方の視界':upper?'STRUCTURAL VISION':'BIOLOGICAL VISION';
+  $('view-note').textContent=linked?'視界リンク：敵・アイテム・地形が可視':upper?'地形・危険な床：可視 / 敵・アイテム：不可視':'敵・アイテム：可視 / 地形の詳細：不可視';
+  const effects=[['shield','シールド（1発）'],['boost','加速 ×1.3'],['link','視界リンク']].filter(([key])=>team[key]>0).map(([key,label])=>`${label} ${Math.ceil(team[key])}秒`);
+  if(team.scans.length)effects.push(`スキャン（取得時の敵位置） ${Math.ceil(team.scans[0].life)}秒`);
+  $('item-effects').textContent=effects.join(' / ')||'発動中のアイテムなし';
+  $('item-pickup').textContent=team.pickup?(team.pickup.kind==='blocked'?'シールドが攻撃を防いだ！':`${ITEM_INFO[team.pickup.kind].name} 発動！`):'';
   const seconds=Math.ceil(state.time);$('timer').textContent=`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
   const duel=state.mode==='duel';
   $('round-label').textContent=duel?`ROUND ${state.round} / ${ROUND_COUNT}`:'PRACTICE / ESCAPE';
@@ -127,6 +139,11 @@ function updateHUD(){
   const deg=(Math.round(team.angle*180/Math.PI)+450)%360;
   $('compass').textContent=`${['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8]} · ${String(deg).padStart(3,'0')}° / P ${Math.round(team.pitch*180/Math.PI)}°`;
   const bodyDeg=(Math.round(team.bodyAngle*180/Math.PI)+450)%360;
+  const pingWait=Math.ceil(team.pingCooldown||0);
+  $('ping-button').disabled=pingWait>0||state.status!=='playing'||(!solo&&room?.players.length!==4);
+  $('ping-button').querySelector('span').textContent=pingWait?`ピン：あと${pingWait}秒`:'照準先にピン（15秒に1回）';
+  const ping=state.pings?.find(p=>p.team===slot[0]);
+  $('ping-status').textContent=ping?`◇ ${slot.endsWith('upper')?'共有中':'相棒のピン'} · あと${Math.ceil(ping.life)}秒`:'ピンは相棒と自分にだけ表示';
   $('body-heading').textContent=`BODY / W ${String(bodyDeg).padStart(3,'0')}°`;
   $('location').textContent=`POSITION ${team.x.toFixed(1)} / ${team.y.toFixed(1)}`;
   const signal=state.signals.find(s=>s.team===slot[0]);
@@ -203,8 +220,9 @@ $('switch-role').addEventListener('click',switchRole);
 $('quit-game').addEventListener('click',()=>{exitGame();if(room)leaveRoom();});
 $('retry').addEventListener('click',()=>{if(solo)enterGame(true);else startMission();});
 $('signal-one').addEventListener('click',()=>sendSignal(0));$('signal-two').addEventListener('click',()=>sendSignal(1));
+$('ping-button').addEventListener('click',sendPing);
 $('copy-room').addEventListener('click',async()=>{
-  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','20261012-1');url.hash=`room=${room.code}`;
+  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','20261013-2');url.hash=`room=${room.code}`;
   try{await navigator.clipboard.writeText(url.href);status('招待URLをコピーしました。3人に共有してください。');}catch{status(`コピーできませんでした。コード ${room.code} を共有してください。`);}
 });
 $('toggle-help').addEventListener('click',()=>{clearControls();document.exitPointerLock?.();$('help-dialog').showModal();});
@@ -229,7 +247,8 @@ document.addEventListener('keydown',e=>{
   if(!inGame||$('help-dialog').open)return;
   if(e.target instanceof HTMLButtonElement&&['Space','Enter'].includes(e.code))return;
   if(e.code==='Tab'&&solo){e.preventDefault();if(!e.repeat)switchRole();return;}
-  if(['KeyW','KeyA','KeyS','KeyD','KeyZ','KeyC','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyQ','KeyE'].includes(e.code)){
+  if(e.code==='KeyG'){e.preventDefault();if(!e.repeat)sendPing();return;}
+  if(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyQ','KeyE'].includes(e.code)){
     e.preventDefault();keys.add(e.code);if(!e.repeat&&e.code==='KeyQ')sendSignal(0);if(!e.repeat&&e.code==='KeyE')sendSignal(1);
   }
 });

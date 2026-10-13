@@ -1,22 +1,25 @@
-import {MAP,WIDTH,HEIGHT,HAZARDS,EXIT,raycast,normalizeAngle,distance,EYE_HEIGHT,WALL_HEIGHT,ROBOT_HEIGHT} from './engine.js';
+import {MAP,WIDTH,HEIGHT,HAZARDS,EXIT,raycast,normalizeAngle,distance,EYE_HEIGHT,WALL_HEIGHT,ROBOT_HEIGHT,ITEM_INFO} from './engine.js?v=20261013-2';
 import {drawHumanoid} from './humanoid.js';
 
 export function visibleEntities(state,slot){
   const upper=slot.endsWith('upper'),entities=[];
-  if(!upper){
+  if(!upper||state.teams.find(t=>t.id===slot[0])?.link>0){
     state.enemies.filter(e=>e.hp>0).forEach(e=>entities.push({...e,type:'enemy'}));
     state.cores.filter(e=>!e.taken).forEach(e=>entities.push({...e,type:'core'}));
+    state.items.filter(e=>!e.taken).forEach(e=>entities.push({...e,type:'item'}));
     if(state.mode==='duel')state.teams.filter(t=>t.id!==slot[0]&&t.hp>0).forEach(t=>entities.push({...t,type:'opponent'}));
   }
-  if(upper&&state.mode!=='duel')entities.push({...EXIT,type:'exit'});
+  if((upper||state.teams.find(t=>t.id===slot[0])?.link>0)&&state.mode!=='duel')entities.push({...EXIT,type:'exit'});
   return entities;
 }
+export const visiblePings=(state,slot)=>(state.pings||[]).filter(p=>p.team===slot[0]&&p.life>0);
+export const visibleScans=(state,slot)=>state.teams.find(t=>t.id===slot[0])?.scans.filter(p=>p.life>0)||[];
 
 export class Renderer {
   constructor(canvas,bodyCanvas=null){this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});this.bodyCanvas=bodyCanvas;this.depth=[];}
   draw(state,slot){
     const {ctx:c,canvas}=this;
-    const w=canvas.width,h=canvas.height,upper=slot.endsWith('upper');
+    const w=canvas.width,h=canvas.height,upper=slot.endsWith('upper')||state.teams.find(t=>t.id===slot[0])?.link>0;
     const team=state.teams.find(t=>t.id===slot[0])||state.teams[0];
     const plane=w*.72,horizon=h*.5+Math.tan(team.pitch)*plane;
     this.horizon=horizon;
@@ -68,10 +71,27 @@ export class Renderer {
     if(upper)this.minimap(state,team,w,h);
     else this.seekerBadge(c,w,h,state);
     this.bodyDirection(team,w,h);
+    for(const ping of visiblePings(state,slot))this.pingMarker(ping,team,plane,w,h);
+    visibleScans(state,slot).forEach((scan,stack)=>this.pingMarker({...scan,stack},team,plane,w,h));
     if(this.bodyCanvas)this.bodyPreview(team,firing);
     if(team.hurt>0){c.fillStyle=`rgba(218,55,38,${team.hurt*.5})`;c.fillRect(0,0,w,h);}
     if(team.hp<=0){c.fillStyle='#09100dde';c.fillRect(0,0,w,h);c.textAlign='center';c.fillStyle='#e5b18b';c.font='24px sans-serif';c.fillText('機体停止',w/2,h/2);c.textAlign='left';}
     const vignette=c.createRadialGradient(w/2,h/2,h*.18,w/2,h/2,w*.65);vignette.addColorStop(0,'transparent');vignette.addColorStop(1,'#0009');c.fillStyle=vignette;c.fillRect(0,0,w,h);
+  }
+  pingMarker(ping,team,plane,w,h){
+    const c=this.ctx,angle=normalizeAngle(Math.atan2(ping.y-team.y,ping.x-team.x)-team.angle);
+    const projected=this.project(ping,team,plane,w);
+    const ahead=Math.cos(angle)>0&&projected;
+    const x=ahead?Math.max(40,Math.min(w-40,projected.x)):(angle<0?40:w-40);
+    let y=ahead?Math.max(110,Math.min(h-120,projected.y)):h*.5;
+    const offscreen=!ahead||x!==projected.x||y!==projected.y;
+    if(ping.scan&&offscreen)y=Math.min(h-120,140+(ping.stack||0)*60);
+    const color=ping.scan?'#ffad97':'#79efff';
+    c.save();c.strokeStyle=color;c.fillStyle='#091b28e8';c.lineWidth=3;
+    c.beginPath();c.moveTo(x,y-13);c.lineTo(x+13,y);c.lineTo(x,y+13);c.lineTo(x-13,y);c.closePath();c.fill();c.stroke();
+    c.font='bold 15px sans-serif';c.textAlign='center';c.fillStyle=color;
+    c.fillText(`${offscreen?(angle<0?'◀ ':'▶ '):''}${ping.scan?'SCAN':'PIN'}`,x,y-22);
+    c.fillText(`${distance(ping,team).toFixed(1)}m`,x,y+34);c.restore();
   }
   floorTile(team,x,y,plane,w,h,color,outline=false){
     const c=this.ctx,cos=Math.cos(team.angle),sin=Math.sin(team.angle);
@@ -90,9 +110,9 @@ export class Renderer {
   sprite(e,team,state,plane,w,h){
     const c=this.ctx,d=distance(e,team),angle=normalizeAngle(Math.atan2(e.y-team.y,e.x-team.x)-team.angle),z=d*Math.cos(angle);
     if(z<.18||Math.abs(angle)>1.2)return;
-    const sx=w/2+Math.tan(angle)*plane,size=Math.min(h*2,plane/z*(e.type==='core'?.36:.67));
+    const sx=w/2+Math.tan(angle)*plane,size=Math.min(h*2,plane/z*(['core','item'].includes(e.type)?.36:.67));
     if(sx+size<0||sx-size>w)return;
-    const height=e.type==='core'?.45+Math.sin(state.elapsed*2+e.id)*.045:e.type==='exit'?.7:EYE_HEIGHT;
+    const height=['core','item'].includes(e.type)?.45+Math.sin(state.elapsed*2+e.x)*.045:e.type==='exit'?.7:EYE_HEIGHT;
     const sy=this.horizon+(EYE_HEIGHT-height)*plane/z;
     // Clip each visible screen stripe against the wall depth buffer.
     c.save();c.beginPath();
@@ -104,7 +124,13 @@ export class Renderer {
       c.fillStyle='#ffc3a1';c.font='10px monospace';c.textAlign='center';c.fillText(`ENEMY / UNIT ${e.id.toUpperCase()}`,label.x,label.y);c.restore();return;
     }
     c.translate(sx,sy);
-    if(e.type==='core'){
+    if(e.type==='item'||(e.type==='core'&&state.mode==='duel')){
+      const info=ITEM_INFO[e.kind||'repair'];
+      c.fillStyle='#101e25';c.strokeStyle=info.color;c.lineWidth=3;
+      c.beginPath();c.moveTo(0,-size*.6);c.lineTo(size*.45,-size*.2);c.lineTo(size*.35,size*.4);c.lineTo(-size*.35,size*.4);c.lineTo(-size*.45,-size*.2);c.closePath();c.fill();c.stroke();
+      c.fillStyle=info.color;c.font=`bold ${Math.max(12,size*.6)}px sans-serif`;c.textAlign='center';c.fillText(info.symbol,0,size*.13);
+      this.label(info.name,size,info.color);
+    }else if(e.type==='core'){
       c.shadowBlur=25;c.shadowColor='#d6fa70';c.fillStyle='#d6fa70';c.beginPath();c.moveTo(0,-size*.65);c.lineTo(size*.4,0);c.lineTo(0,size*.65);c.lineTo(-size*.4,0);c.closePath();c.fill();c.shadowBlur=0;c.strokeStyle='#f2ffd0';c.lineWidth=2;c.beginPath();c.moveTo(0,-size*.65);c.lineTo(0,size*.65);c.stroke();this.label(state.mode==='duel'?'REPAIR +30 HP':'ENERGY CORE',size,'#d6fa70');
     }else if(e.type==='enemy'){
       c.fillStyle=e.hit>0?'#fff1d9':'#ac514a';c.strokeStyle='#ffa994';c.lineWidth=2;

@@ -1,7 +1,7 @@
-import {SLOTS,sanitizeInput} from './engine.js';
-import {peerOptions,iceServersUrl} from '../network-config.js?v=20261012-1';
+import {SLOTS,sanitizeInput} from './engine.js?v=20261013-2';
+import {peerOptions,iceServersUrl} from '../network-config.js?v=20261013-2';
 
-const PREFIX='split-signal-v3-';
+const PREFIX='split-signal-v5-';
 let libraryPromise;
 function loadPeer(){
   if(globalThis.Peer)return Promise.resolve(globalThis.Peer);
@@ -76,7 +76,7 @@ export class Room {
         if(!this.peer.open){this.joinTimer=setTimeout(join,1000);return;}
         joinAttempts++;
         this.callbacks.onStatus?.('ホストを探して、プレイヤー間の通信経路を確認しています…');
-        const connection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:3,name:this.name}});
+        const connection=this.peer.connect(PREFIX+code,{reliable:true,serialization:'json',metadata:{game:'split-signal',version:5,name:this.name}});
         this.hostConnection=connection;
         connection.on('data',data=>{
           if(!data||typeof data!=='object'||this.closed||this.hostConnection!==connection)return;
@@ -165,7 +165,7 @@ export class Room {
     connection.on('open',()=>{
       if(this.closed){connection.close();return;}
       const metadata=connection.metadata;
-      if(metadata?.game!=='split-signal'||metadata.version!==3||this.players.length>=4||this.connections.has(connection.peer)){
+      if(metadata?.game!=='split-signal'||metadata.version!==5||this.players.length>=4||this.connections.has(connection.peer)){
         this.safeSend(connection,{type:'reject',message:'ルームが満員、または互換性のない接続です。'});
         setTimeout(()=>connection.close(),250);return;
       }
@@ -185,6 +185,7 @@ export class Room {
         this.inputs[player.slot]=clean;this.lastInput[player.slot]=performance.now();
       }
       if(data.type==='claim')this.claimFor(player.id,data.slot);
+      if(data.type==='ping'&&player.slot.endsWith('upper'))this.callbacks.onPing?.(player.slot);
       if(data.type==='signal'&&[0,1].includes(data.index)){
         const now=performance.now();if(now-(player.lastSignal||0)>600){player.lastSignal=now;this.callbacks.onSignal?.(player.slot,data.index);}
       }
@@ -215,6 +216,7 @@ export class Room {
   claim(slot){if(this.isHost)this.claimFor(this.id,slot);else this.safeSend(this.hostConnection,{type:'claim',slot});}
   sendInput(input){this.safeSend(this.hostConnection,{type:'input',input});}
   signal(index){if(this.isHost)this.callbacks.onSignal?.(this.slot,index);else this.safeSend(this.hostConnection,{type:'signal',index});}
+  ping(){if(this.isHost)this.callbacks.onPing?.(this.slot);else this.safeSend(this.hostConnection,{type:'ping'});}
   broadcastState(state){for(const c of this.connections.values())this.safeSend(c,{type:'state',state});}
   readInputs(){
     const now=performance.now(),result={};

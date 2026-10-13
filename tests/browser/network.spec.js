@@ -6,7 +6,7 @@ test('signaling reconnect keeps the code, seats and existing data channel, and a
     const pages=[];
     for(let i=0;i<3;i++){
       const context=await browser.newContext();contexts.push(context);
-      const page=await context.newPage();pages.push(page);await page.goto('/');
+      const page=await context.newPage();pages.push(page);await page.goto('/',{waitUntil:'domcontentloaded'});
     }
     const [host,guest,newGuest]=pages;
     const code=await host.evaluate(async()=>{
@@ -42,7 +42,7 @@ test('temporary TURN settings are fetched on each connection and failures remain
     requests++;
     return route.fulfill({json:{iceServers:[{urls:'turns:relay.example:443',username:`temporary-${requests}`,credential:'test'}]}});
   });
-  await page.goto('/');
+  await page.goto('/',{waitUntil:'domcontentloaded'});
   const options=await page.evaluate(async()=>{
     // Capture constructor configuration; this test does not claim the test relay exists.
     globalThis.Peer=class{

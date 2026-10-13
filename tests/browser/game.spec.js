@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 
 test('practice: movement, role separation, turning, signals, help and return to lobby',async({page})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto('/');await expect(page.getByRole('heading',{name:/ONE BODY/})).toBeVisible();
+  await page.goto('/',{waitUntil:'domcontentloaded'});await expect(page.getByRole('heading',{name:/ONE BODY/})).toBeVisible();
   await page.screenshot({path:'test-results/lobby.png',fullPage:true});
   await page.getByRole('button',{name:'ひとりで練習する'}).click();
   await expect(page.locator('#role-title')).toHaveText('SEEKER / 下半身');
@@ -11,7 +11,7 @@ test('practice: movement, role separation, turning, signals, help and return to 
   await expect(page.locator('#location')).not.toHaveText(before);
   const lowerView=await page.locator('#compass').textContent(),bodyBefore=await page.locator('#body-heading').textContent();
   await page.keyboard.down('c');await page.waitForTimeout(300);await page.keyboard.up('c');
-  await expect(page.locator('#body-heading')).not.toHaveText(bodyBefore);
+  await expect(page.locator('#body-heading')).toHaveText(bodyBefore);
   await expect(page.locator('#compass')).toHaveText(lowerView);
   await page.screenshot({path:'test-results/seeker.png'});
   await page.keyboard.press('Tab');await expect(page.locator('#role-title')).toHaveText('ARCHITECT / 上半身');
@@ -21,11 +21,15 @@ test('practice: movement, role separation, turning, signals, help and return to 
   const angle=await page.locator('#compass').textContent();
   await page.keyboard.down('ArrowRight');await page.waitForTimeout(300);await page.keyboard.up('ArrowRight');
   await expect(page.locator('#compass')).not.toHaveText(angle);
-  const heading=await page.locator('#body-heading').textContent();
   await page.keyboard.down('ArrowUp');await page.waitForTimeout(300);await page.keyboard.up('ArrowUp');
   await expect(page.locator('#compass')).not.toContainText('/ P 0°');
-  await expect(page.locator('#body-heading')).toHaveText(heading);
+  await expect.poll(()=>page.evaluate(()=>document.querySelector('#body-heading').textContent.includes(document.querySelector('#compass').textContent.match(/\d{3}°/)[0]))).toBe(true);
   await expect(page.locator('#body-preview')).toBeVisible();
+  await page.keyboard.press('g');await expect(page.locator('#ping-status')).toContainText('共有中');
+  await expect(page.locator('#ping-button')).toBeDisabled();
+  await page.keyboard.press('Tab');await expect(page.locator('#ping-status')).toContainText('相棒のピン');
+  await page.screenshot({path:'test-results/ping-lower.png'});
+  await expect(page.locator('#ping-button')).toBeHidden();await page.keyboard.press('Tab');
   await page.keyboard.press('q');await expect(page.locator('#signal')).toContainText('進んで大丈夫');
   await page.keyboard.press('Space');await page.screenshot({path:'test-results/architect.png'});
   await page.getByRole('button',{name:'操作説明',exact:true}).click();await expect(page.locator('#help-dialog')).toBeVisible();
@@ -34,7 +38,7 @@ test('practice: movement, role separation, turning, signals, help and return to 
 });
 
 test('mobile landing page fits viewport and practice remains accessible',async({page})=>{
-  await page.setViewportSize({width:390,height:844});await page.goto('/');
+  await page.setViewportSize({width:390,height:844});await page.goto('/',{waitUntil:'domcontentloaded'});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(390);
   await page.screenshot({path:'test-results/mobile.png',fullPage:true});
   await page.getByRole('button',{name:'ひとりで練習する'}).click();
@@ -47,7 +51,7 @@ test('real PeerJS: four browsers connect, role input synchronizes, capacity and 
   try{
     for(let i=0;i<5;i++){
       const context=await browser.newContext();contexts.push(context);const page=await context.newPage();pages.push(page);
-      page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await page.locator('#player-name').fill(`Pilot ${i+1}`);
+      page.on('pageerror',e=>errors.push(e.message));await page.goto('/',{waitUntil:'domcontentloaded'});await page.locator('#player-name').fill(`Pilot ${i+1}`);
     }
     const host=pages[0];await host.locator('#create-room').click();await expect(host.locator('#room-panel')).toBeVisible({timeout:25000});
     const code=await host.locator('#room-code').textContent();
@@ -70,15 +74,19 @@ test('real PeerJS: four browsers connect, role input synchronizes, capacity and 
     const initialBody=await host.locator('#body-heading').textContent();
     await pages[1].locator('#viewport').focus();await pages[1].keyboard.down('ArrowRight');await pages[1].waitForTimeout(500);await pages[1].keyboard.up('ArrowRight');
     await expect(host.locator('#compass')).not.toHaveText(initialAngle);
-    await expect(host.locator('#body-heading')).toHaveText(initialBody);
+    await expect(host.locator('#body-heading')).not.toHaveText(initialBody);
     await pages[1].keyboard.down('ArrowUp');await pages[1].waitForTimeout(250);await pages[1].keyboard.up('ArrowUp');
     await expect(host.locator('#compass')).not.toContainText('/ P 0°');
     await expect.poll(async()=>await pages[1].locator('#compass').textContent()===await host.locator('#compass').textContent()).toBe(true);
-    const headAfter=await host.locator('#compass').textContent();
+    const headAfter=await host.locator('#compass').textContent(),bodyAfter=await host.locator('#body-heading').textContent();
     await host.locator('#viewport').focus();await host.keyboard.down('c');await host.waitForTimeout(300);await host.keyboard.up('c');
-    await expect(host.locator('#body-heading')).not.toHaveText(initialBody);
+    await expect(host.locator('#body-heading')).toHaveText(bodyAfter);
     await expect(host.locator('#compass')).toHaveText(headAfter);
     await expect.poll(async()=>await pages[1].locator('#body-heading').textContent()===await host.locator('#body-heading').textContent()).toBe(true);
+    await pages[1].keyboard.press('g');
+    await expect(host.locator('#ping-status')).toContainText('相棒のピン');
+    await expect(pages[1].locator('#ping-button')).toBeDisabled();
+    await expect(pages[2].locator('#ping-status')).not.toContainText('相棒のピン');
     await pages[1].keyboard.press('q');await expect(host.locator('#signal')).toContainText('進んで大丈夫');
     await pages[3].getByRole('button',{name:'ロビーへ',exact:true}).click();
     await expect(host.locator('#signal')).toContainText('接続待ち');
@@ -94,7 +102,7 @@ test('real PeerJS: four browsers connect, role input synchronizes, capacity and 
 });
 
 test('articulated opponent and self monitor render at different head and body directions',async({page})=>{
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/',{waitUntil:'domcontentloaded'});
   await page.evaluate(async()=>{
     const {createState}=await import('/src/engine.js'),{Renderer}=await import('/src/renderer.js');
     const canvas=document.createElement('canvas');canvas.id='pose-scene';canvas.width=960;canvas.height=600;
@@ -114,12 +122,12 @@ test('four peers complete exactly three timed rounds, synchronize results and ca
     for(let i=0;i<4;i++){
       const context=await browser.newContext();contexts.push(context);
       // Shorten the real simulation clock in the test only; no production debug hooks.
-      await context.route('**/src/engine.js',async route=>{
+      await context.route('**/src/engine.js*',async route=>{
         const response=await route.fetch();
         const body=(await response.text()).replace('ROUND_SECONDS=90','ROUND_SECONDS=2').replace('ROUND_BREAK=5','ROUND_BREAK=2');
         await route.fulfill({response,body});
       });
-      const page=await context.newPage();pages.push(page);await page.goto('/');
+      const page=await context.newPage();pages.push(page);await page.goto('/',{waitUntil:'domcontentloaded'});
     }
     const host=pages[0];await host.locator('#create-room').click();
     await expect(host.locator('#room-panel')).toBeVisible({timeout:25000});

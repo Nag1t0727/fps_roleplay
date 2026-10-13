@@ -23,6 +23,14 @@ export const HAZARDS = [{x:6,y:4},{x:7,y:4},{x:12,y:9},{x:13,y:9},{x:4,y:9},{x:1
 export const SLOTS = ['a-lower','a-upper','b-lower','b-upper'];
 export const SLOT_LABELS = {'a-lower':'A / 下半身','a-upper':'A / 上半身','b-lower':'B / 下半身','b-upper':'B / 上半身'};
 export const ROUND_SECONDS=90, ROUND_COUNT=3, ROUND_BREAK=5, SHOT_DAMAGE=25;
+export const PING_COOLDOWN=15, PING_LIFETIME=6;
+export const ITEM_INFO={repair:{name:'修理パック',color:'#d6fa70',symbol:'+'},shield:{name:'シールド',color:'#79efff',symbol:'◇'},boost:{name:'加速バッテリー',color:'#ffd36e',symbol:'»'},link:{name:'視界リンク',color:'#df9dff',symbol:'∞'},scan:{name:'スキャンパルス',color:'#ffad97',symbol:'◎'}};
+const freshEffects=()=>({shield:0,boost:0,link:0,scans:[],pickup:null});
+function createItems(solo){
+  const positions={shield:[[3.5,12.5],[16.5,3.5]],boost:[[5.5,10.5],[14.5,5.5]],link:[[8.5,7.5],[11.5,8.5]],scan:[[5.5,5.5],[14.5,10.5]]};
+  if(solo)positions.repair=[[4.5,12.5],[15.5,3.5]];
+  return Object.entries(positions).flatMap(([kind,points])=>points.map(([x,y],i)=>({id:`${kind}-${i}`,kind,x,y,taken:false})));
+}
 export const EYE_HEIGHT=.96, ROBOT_HEIGHT=1.3, WALL_HEIGHT=1.8, MAX_PITCH=Math.PI/3;
 export const blankInput = () => ({forward:0,strafe:0,bodyTurn:0,turn:0,look:0,pitchTurn:0,pitchLook:0,fire:false});
 export const normalizeAngle = a => Math.atan2(Math.sin(a),Math.cos(a));
@@ -31,7 +39,7 @@ export const distance = (a,b) => Math.hypot(a.x-b.x,a.y-b.y);
 
 export function createState(solo=false) {
   const state = {
-    solo, mode:solo?'practice':'duel', status:'playing', time:360, elapsed:0, collected:0, shots:[], signals:[], kills:0,
+    solo, mode:solo?'practice':'duel', status:'playing', time:360, elapsed:0, collected:0, shots:[], signals:[], pings:[], kills:0,
     teams:[{id:'a',x:2.5,y:13.2,angle:-Math.PI/2,hp:100,cooldown:0,hurt:0,revive:0},
       {id:'b',x:4,y:13.2,angle:-Math.PI/2,hp:100,cooldown:0,hurt:0,revive:0}],
     cores:[{id:0,x:3.5,y:10.3,taken:false},{id:1,x:3,y:2.5,taken:false},
@@ -40,7 +48,9 @@ export function createState(solo=false) {
       {id:2,x:10.5,y:5.2,hp:2,hit:0},{id:3,x:15.6,y:10,hp:2,hit:0},
       {id:4,x:16.2,y:3.5,hp:2,hit:0}],
   };
-  state.teams.forEach(team=>Object.assign(team,{bodyAngle:team.angle,pitch:0,gait:0,moveSpeed:0}));
+  state.items=createItems(solo);
+  state.teams.forEach(team=>Object.assign(team,freshEffects()));
+  state.teams.forEach(team=>Object.assign(team,{bodyAngle:team.angle,pitch:0,gait:0,moveSpeed:0,pingCooldown:0}));
   if(!solo){
     Object.assign(state,{round:1,scores:{a:0,b:0},rounds:[],winner:null,roundWinner:null,intermission:0});
     resetDuelRound(state);
@@ -51,9 +61,11 @@ export function createState(solo=false) {
 function resetDuelRound(state){
   const spawns=[{x:2.5,y:13.2,angle:-Math.PI/2},{x:17.5,y:2.8,angle:Math.PI/2}];
   state.teams.forEach((team,i)=>Object.assign(team,spawns[(i+state.round-1)%2],{hp:100,cooldown:0,hurt:0,revive:0}));
-  state.teams.forEach(team=>Object.assign(team,{bodyAngle:team.angle,pitch:0,gait:0,moveSpeed:0}));
+  state.teams.forEach(team=>Object.assign(team,{bodyAngle:team.angle,pitch:0,gait:0,moveSpeed:0,pingCooldown:0}));
   state.cores.forEach(core=>{core.taken=false;});
-  state.enemies=[];state.time=ROUND_SECONDS;state.status='playing';state.shots=[];state.signals=[];
+  state.items.forEach(item=>{item.taken=false;});
+  state.teams.forEach(team=>Object.assign(team,freshEffects()));
+  state.enemies=[];state.time=ROUND_SECONDS;state.status='playing';state.shots=[];state.signals=[];state.pings=[];
   state.collected=0;state.roundWinner=null;state.reason='';state.intermission=0;
 }
 
@@ -99,17 +111,64 @@ export function lineOfSight(a,b){return raycast(a.x,a.y,Math.atan2(b.y-a.y,b.x-a
 
 function moveAndLook(team,inputs,dt){
   const lower=sanitizeInput(inputs[`${team.id}-lower`]),upper=sanitizeInput(inputs[`${team.id}-upper`]);
-  // Head yaw is a world-space direction; neither player silently steers the other's axis.
+  // Movement follows the shared view; vertical aim never changes ground speed.
   team.angle=normalizeAngle(team.angle+upper.turn*2.05*dt+upper.look);
   team.pitch=Math.max(-MAX_PITCH,Math.min(MAX_PITCH,team.pitch+upper.pitchTurn*1.35*dt+upper.pitchLook));
-  team.bodyAngle=normalizeAngle(team.bodyAngle+lower.bodyTurn*1.8*dt);
-  const speed=2.35*dt/Math.max(1,Math.hypot(lower.forward,lower.strafe)),x=team.x,y=team.y;
+  team.bodyAngle=team.angle;
+  const speed=2.35*(team.boost>0?1.3:1)*dt/Math.max(1,Math.hypot(lower.forward,lower.strafe)),x=team.x,y=team.y;
   move(team,(Math.cos(team.bodyAngle)*lower.forward-Math.sin(team.bodyAngle)*lower.strafe)*speed,
     (Math.sin(team.bodyAngle)*lower.forward+Math.cos(team.bodyAngle)*lower.strafe)*speed);
   const travelled=Math.hypot(team.x-x,team.y-y);
   team.gait=(team.gait+travelled*9)%(Math.PI*2);
   team.moveSpeed+=(Math.min(1,travelled/Math.max(dt*2.35,1e-8))-team.moveSpeed)*Math.min(1,dt*14);
   return upper;
+}
+
+export function placePing(state,slot){
+  if(!SLOTS.includes(slot)||!slot.endsWith('upper')||state.status!=='playing')return false;
+  const team=state.teams.find(t=>t.id===slot[0]);
+  if(!team||team.hp<=0||team.pingCooldown>1e-8)return false;
+  const wall=raycast(team.x,team.y,team.angle),slope=Math.tan(team.pitch);
+  const verticalLimit=slope<0?-EYE_HEIGHT/slope:slope>0?(WALL_HEIGHT-EYE_HEIGHT)/slope:Infinity;
+  const d=Math.max(0,Math.min(wall.distance,verticalLimit)-.04);
+  state.pings=state.pings.filter(p=>p.team!==team.id);
+  state.pings.push({team:team.id,x:team.x+Math.cos(team.angle)*d,y:team.y+Math.sin(team.angle)*d,z:EYE_HEIGHT+slope*d,life:PING_LIFETIME});
+  team.pingCooldown=PING_COOLDOWN;
+  return true;
+}
+
+function tickPings(state,dt){
+  state.pings=state.pings.filter(p=>(p.life-=dt)>0);
+  for(const team of state.teams)team.pingCooldown=Math.max(0,team.pingCooldown-dt);
+  for(const team of state.teams){
+    for(const effect of ['shield','boost','link'])team[effect]=Math.max(0,team[effect]-dt);
+    team.scans=team.scans.filter(p=>(p.life-=dt)>0);
+    if(team.pickup&&(team.pickup.life-=dt)<=0)team.pickup=null;
+  }
+}
+
+function collectItems(state,active){
+  const pickups=state.mode==='duel'?[...state.items,...state.cores.map(core=>({...core,kind:'repair',core}))]:state.items;
+  for(const item of pickups){
+    if(item.taken)continue;
+    const nearby=active.filter(t=>t.hp>0&&(item.kind!=='repair'||t.hp<100)&&distance(t,item)<.57&&lineOfSight(t,item)).sort((a,b)=>distance(a,item)-distance(b,item));
+    if(!nearby.length||(nearby.length>1&&Math.abs(distance(nearby[0],item)-distance(nearby[1],item))<1e-8))continue;
+    const team=nearby[0];(item.core||item).taken=true;
+    if(item.kind==='repair')team.hp=Math.min(100,team.hp+30);
+    if(item.kind==='shield')team.shield=8;
+    if(item.kind==='boost')team.boost=6;
+    if(item.kind==='link')team.link=3;
+    if(item.kind==='scan'){
+      const targets=state.mode==='duel'?state.teams.filter(t=>t.id!==team.id):state.enemies;
+      team.scans=targets.filter(t=>t.hp>0).map(t=>({x:t.x,y:t.y,z:EYE_HEIGHT,life:3,scan:true}));
+    }
+    team.pickup={kind:item.kind,life:3};
+  }
+}
+
+function enemyDamage(team,amount){
+  if(team.shield>0){team.shield=0;team.pickup={kind:'blocked',life:2};return;}
+  team.hp=Math.max(0,team.hp-amount);team.hurt=.25;
 }
 
 function shoot(state,team,damage){
@@ -138,6 +197,7 @@ export function step(state,inputs,dt){
   if(state.status!=='playing')return;
   dt=Math.max(0,Math.min(dt,.05));
   state.time=Math.max(0,state.time-dt);state.elapsed+=dt;
+  tickPings(state,dt);
   state.shots=state.shots.filter(s=>(s.life-=dt)>0);
   state.signals=state.signals.filter(s=>(s.life-=dt)>0);
   const active=state.solo?state.teams.slice(0,1):state.teams;
@@ -151,13 +211,14 @@ export function step(state,inputs,dt){
       team.hp=Math.max(0,team.hp-14*dt);team.hurt=.2;
     }
   }
+  collectItems(state,active);
   for(const enemy of state.enemies){
     enemy.hit=Math.max(0,enemy.hit-dt);if(enemy.hp<=0)continue;
     const targets=active.filter(t=>t.hp>0&&distance(t,enemy)<6&&lineOfSight(enemy,t)).sort((a,b)=>distance(a,enemy)-distance(b,enemy));
     if(!targets.length)continue;
     const target=targets[0],d=distance(target,enemy);
     if(d>.65){const speed=(state.solo?.46:.6)*dt;move(enemy,(target.x-enemy.x)/d*speed,(target.y-enemy.y)/d*speed,.2);}
-    else {target.hp=Math.max(0,target.hp-10*dt);target.hurt=.25;}
+    else {enemy.attackCooldown=Math.max(0,(enemy.attackCooldown||0)-dt);if(enemy.attackCooldown<=0){enemyDamage(target,8);enemy.attackCooldown=.8;}}
   }
   for(const team of active){
     if(team.hp>0)continue;
@@ -179,6 +240,7 @@ function stepDuel(state,inputs,dt){
   }
   if(state.status!=='playing')return;
   state.time=Math.max(0,state.time-dt);state.elapsed+=dt;
+  tickPings(state,dt);
   state.shots=state.shots.filter(s=>(s.life-=dt)>0);
   state.signals=state.signals.filter(s=>(s.life-=dt)>0);
   for(const team of state.teams){
@@ -189,20 +251,13 @@ function stepDuel(state,inputs,dt){
       team.hp=Math.max(0,team.hp-14*dt);team.hurt=.2;
     }
   }
-  // Resolve shared pickups by distance, not by team iteration order. Exact ties leave the core in place.
-  for(const core of state.cores){
-    if(core.taken)continue;
-    const nearby=state.teams.filter(t=>t.hp>0&&t.hp<100&&distance(t,core)<.57).sort((a,b)=>distance(a,core)-distance(b,core));
-    if(nearby.length&&!(nearby.length===2&&Math.abs(distance(nearby[0],core)-distance(nearby[1],core))<1e-8)){
-      nearby[0].hp=Math.min(100,nearby[0].hp+30);core.taken=true;
-    }
-  }
+  collectItems(state,state.teams);
   // Apply both players' shots together so simultaneous knockouts are a draw.
   const damage={};
   for(const team of state.teams){
     if(team.hp>0&&team.cooldown<=0&&sanitizeInput(inputs[`${team.id}-upper`]).fire)shoot(state,team,damage);
   }
-  for(const team of state.teams)if(damage[team.id]){team.hp=Math.max(0,team.hp-damage[team.id]);team.hurt=.25;}
+  for(const team of state.teams)if(damage[team.id])enemyDamage(team,damage[team.id]);
   const [a,b]=state.teams;
   if(a.hp<=0&&b.hp<=0)finishRound(state,null,'両機が同時に停止');
   else if(a.hp<=0||b.hp<=0)finishRound(state,a.hp>0?'a':'b','相手機体を撃破');

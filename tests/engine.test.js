@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createState,step,MAP,WIDTH,HEIGHT,EXIT,HAZARDS,canStand,isWall,raycast,sanitizeInput,addSignal,blankInput,ROUND_SECONDS,ROUND_BREAK,MAX_PITCH,normalizeAngle} from '../src/engine.js';
+import {createState,step,MAP,WIDTH,HEIGHT,EXIT,HAZARDS,canStand,isWall,raycast,sanitizeInput,addSignal,blankInput,ROUND_SECONDS,ROUND_BREAK,MAX_PITCH,normalizeAngle,placePing,PING_COOLDOWN,PING_LIFETIME} from '../src/engine.js';
 import {Room} from '../src/network.js';
-import {visibleEntities} from '../src/renderer.js';
+import {visibleEntities,visiblePings} from '../src/renderer.js';
 import {humanoidPose} from '../src/humanoid.js';
 
 test('map is enclosed and every core, exit and spawn is reachable without crossing a wall',()=>{
@@ -23,7 +23,7 @@ test('only lower body moves and only upper body can aim or shoot',()=>{
   assert.ok(t.y<y);assert.ok(t.angle>a);assert.equal(state.shots.length,1);
 });
 test('collision stops a body at walls and diagonal movement has the same speed',()=>{
-  const state=createState(true),t=state.teams[0];t.x=1.23;t.y=12;t.bodyAngle=Math.PI;
+  const state=createState(true),t=state.teams[0];t.x=1.23;t.y=12;t.angle=Math.PI;
   for(let i=0;i<120;i++)step(state,{'a-lower':{forward:1}},1/60);
   assert.ok(t.x>=1.22);
   const straight=createState(true),diagonal=createState(true);
@@ -79,6 +79,7 @@ test('occupied seats cannot be claimed and switching clears previous input',()=>
 
 const advanceRound=state=>{for(let i=0;i<ROUND_BREAK*20&&state.status==='round-over';i++)step(state,{'a-lower':{forward:1},'a-upper':{fire:true}},.05);};
 const faceOff=state=>{
+  state.items=[]; // Isolate unbuffed shooting from nearby automatic pickups.
   Object.assign(state.teams[0],{x:2.5,y:12.5,angle:0});
   Object.assign(state.teams[1],{x:4,y:12.5,angle:Math.PI});
 };
@@ -148,31 +149,57 @@ test('repair cores heal up to 100 once per round; full-health players do not con
   a.hp=50;step(state,{},.01);assert.equal(a.hp,50);
 });
 
-test('changing the view cannot steer a held W away from a hazard',()=>{
-  const straight=createState(true),looking=createState(true);
-  for(const state of [straight,looking])Object.assign(state.teams[0],{x:6.5,y:5.05,bodyAngle:-Math.PI/2});
-  for(let i=0;i<5;i++){
-    step(straight,{'a-lower':{forward:1}},.05);
-    step(looking,{'a-lower':{forward:1},'a-upper':{turn:1,look:.35,pitchTurn:1,bodyTurn:1}},.05);
+test('W and strafing follow the view even when bodyAngle was different',()=>{
+  for(const angle of [0,Math.PI/2,Math.PI,-Math.PI/2]){
+    const state=createState(true),t=state.teams[0];Object.assign(t,{x:3,y:12.5,angle,bodyAngle:angle+1,pitch:.9});
+    const x=t.x,y=t.y;step(state,{'a-lower':{forward:1}},.05);
+    assert.ok(Math.abs(t.x-x-Math.cos(angle)*2.35*.05)<1e-8);
+    assert.ok(Math.abs(t.y-y-Math.sin(angle)*2.35*.05)<1e-8);
+    assert.equal(t.bodyAngle,t.angle);
+    const sx=t.x,sy=t.y;step(state,{'a-lower':{strafe:1}},.05);
+    assert.ok(Math.abs(t.x-sx+Math.sin(angle)*2.35*.05)<1e-8);
+    assert.ok(Math.abs(t.y-sy-Math.cos(angle)*2.35*.05)<1e-8);
   }
-  const a=straight.teams[0],b=looking.teams[0];
-  assert.equal(a.x,b.x);assert.equal(a.y,b.y);assert.equal(a.hp,b.hp);assert.ok(b.hp<100);
-  assert.equal(a.bodyAngle,b.bodyAngle);assert.notEqual(a.angle,b.angle);
 });
-test('lower-body steering changes W direction without turning the shared camera',()=>{
-  const state=createState(true),team=state.teams[0],view=team.angle;
-  for(let i=0;i<10;i++)step(state,{'a-lower':{bodyTurn:1,turn:1,pitchTurn:1,look:.3}},.05);
-  assert.equal(team.angle,view);assert.equal(team.pitch,0);assert.notEqual(team.bodyAngle,view);
-  const x=team.x,y=team.y;step(state,{'a-lower':{forward:1}},.05);
-  assert.ok(team.x>x);assert.ok(team.y<y);
+test('only upper role changes the heading, and its turn steers the same tick movement',()=>{
+  const state=createState(true),t=state.teams[0],view=t.angle;
+  step(state,{'a-lower':{bodyTurn:1,turn:1,look:.3,pitchTurn:1}},.05);
+  assert.equal(t.angle,view);assert.equal(t.bodyAngle,view);assert.equal(t.pitch,0);
+  const x=t.x,y=t.y;step(state,{'a-lower':{forward:1},'a-upper':{look:.3}},.05);
+  assert.ok(Math.abs(t.x-x-Math.cos(t.angle)*2.35*.05)<1e-8);
+  assert.ok(Math.abs(t.y-y-Math.sin(t.angle)*2.35*.05)<1e-8);
 });
-test('neck can spin through a full circle while pitch is bounded and body heading stays fixed',()=>{
+test('view rotates 360 degrees and pitch stays bounded while body follows yaw',()=>{
   const state=createState(true),team=state.teams[0],start=team.angle;
   for(let i=0;i<80;i++)step(state,{'a-upper':{turn:1,pitchTurn:1}},.05);
   assert.ok(Math.abs(normalizeAngle(team.angle-start-8.2))<1e-8);
-  assert.equal(team.bodyAngle,start);assert.equal(team.pitch,MAX_PITCH);
+  assert.equal(team.bodyAngle,team.angle);assert.equal(team.pitch,MAX_PITCH);
   for(let i=0;i<80;i++)step(state,{'a-upper':{pitchTurn:-1}},.05);
   assert.equal(team.pitch,-MAX_PITCH);
+});
+test('only upper can pin, cooldown is enforced and only teammates see it',()=>{
+  const state=createState();
+  assert.equal(placePing(state,'a-lower'),false);assert.equal(placePing(state,'invalid'),false);
+  assert.equal(placePing(state,'a-upper'),true);assert.equal(placePing(state,'a-upper'),false);
+  assert.equal(state.teams[0].pingCooldown,PING_COOLDOWN);
+  assert.equal(visiblePings(state,'a-lower').length,1);assert.equal(visiblePings(state,'a-upper').length,1);
+  assert.equal(visiblePings(state,'b-lower').length,0);assert.equal(visiblePings(state,'b-upper').length,0);
+  for(let i=0;i<Math.ceil((PING_LIFETIME+.1)/.05);i++)step(state,{},.05);
+  assert.equal(state.pings.length,0);assert.equal(placePing(state,'a-upper'),false);
+  while(state.teams[0].pingCooldown>1e-8)step(state,{},.05);
+  assert.equal(placePing(state,'a-upper'),true);
+});
+test('pins respect wall and floor intersections, stay fixed, and reset between rounds',()=>{
+  const state=createState(),t=state.teams[0];t.angle=0;t.pitch=0;
+  const wall=raycast(t.x,t.y,t.angle);placePing(state,'a-upper');
+  assert.ok(state.pings[0].x<=wall.x);assert.equal(state.pings[0].y,t.y);
+  t.pingCooldown=0;t.pitch=-Math.PI/4;placePing(state,'a-upper');
+  assert.ok(state.pings[0].z>=0&&state.pings[0].z<.1);
+  const pin={...state.pings[0]};step(state,{'a-lower':{forward:1},'a-upper':{turn:1}},.05);
+  assert.equal(state.pings[0].x,pin.x);assert.equal(state.pings[0].y,pin.y);
+  state.time=.001;step(state,{},.05);assert.equal(placePing(state,'b-upper'),false);
+  state.intermission=0;step(state,{},.05);
+  assert.equal(state.pings.length,0);assert.equal(t.pingCooldown,0);
 });
 test('vertical aiming misses above and below the robot and hits its torso',()=>{
   const state=createState();faceOff(state);const [a,b]=state.teams;

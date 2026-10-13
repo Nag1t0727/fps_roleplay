@@ -3,10 +3,27 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {setImmediate} from 'node:timers/promises';
 import {Room} from '../src/network.js';
+import {createState,placePing} from '../src/engine.js';
 
 class Connection extends EventEmitter{
+  send(){}
   close(){this.closed=true;this.emit('close');}
 }
+
+test('remote pins use the assigned seat and host cooldown, never a supplied team or position',()=>{
+  const state=createState(),room=new Room({onPing:slot=>placePing(state,slot)});
+  room.players=[{id:'host',slot:'a-upper'}];
+  const connection=new Connection();Object.assign(connection,{peer:'guest',open:true,metadata:{game:'split-signal',version:5,name:'Guest'}});
+  room.accept(connection);connection.emit('open');
+  connection.emit('data',{type:'ping',slot:'a-upper',x:999,y:999});
+  assert.equal(state.pings.length,0);
+  connection.emit('data',{type:'claim',slot:'b-upper'});
+  connection.emit('data',{type:'ping',slot:'a-upper',x:999,y:999});
+  assert.equal(state.pings.length,1);assert.equal(state.pings[0].team,'b');assert.ok(state.pings[0].x<20);
+  const first={...state.pings[0]};state.teams[1].angle=0;
+  connection.emit('data',{type:'ping'});assert.deepEqual(state.pings[0],first);
+  room.close();
+});
 class Peer extends EventEmitter{
   constructor(id,options){super();this.options=options||id;this.calls=[];this.reconnects=0;}
   register(){this.open=true;this.disconnected=false;this.emit('open','test-peer');}
