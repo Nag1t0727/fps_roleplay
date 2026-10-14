@@ -1,4 +1,4 @@
-import {SLOTS,sanitizeInput} from './engine.js?v=motion-1';
+import {SLOTS,sanitizeInput} from './engine.js?v=cosmetics-3';
 import {mqttBrokers} from '../network-config.js?v=mqtt-1';
 
 let libraryPromise;
@@ -29,7 +29,7 @@ export class Room{
   }
   async open(host,code,name){
     this.isHost=host;this.code=code;this.name=cleanName(name);this.id=crypto.randomUUID();
-    this.topic=`split-signal/mqtt-v2/${code}/messages`;
+    this.topic=`split-signal/mqtt-v3/${code}/messages`;
     const mqtt=await loadMqtt();if(this.closed)throw new Error('接続はキャンセルされました。');
     const brokers=globalThis.SPLIT_SIGNAL_MQTT_BROKERS||mqttBrokers;
     if(!Array.isArray(brokers)||!brokers.length)throw new Error('[MQTT_CONFIG] 接続先が設定されていません。');
@@ -154,6 +154,7 @@ export class Room{
         this.inputs[player.slot]=clean;this.lastInput[player.slot]=performance.now();
       }
       if(data.type==='claim')this.claimFor(player.id,data.slot);
+      if(data.type==='cosmetic'&&['wave','salute','sway','link','star','smile'].includes(data.kind))this.callbacks.onCosmetic?.(player.slot,data.kind);
       if(data.type==='ping'&&player.slot.endsWith('upper'))this.callbacks.onPing?.(player.slot);
       if(data.type==='signal'&&[0,1].includes(data.index)){
         const now=performance.now();if(now-(player.lastSignal||0)>600){player.lastSignal=now;this.callbacks.onSignal?.(player.slot,data.index);}
@@ -185,6 +186,7 @@ export class Room{
   claim(slot){if(this.isHost)this.claimFor(this.id,slot);else this.safeSend(this.hostConnection,{type:'claim',slot});}
   sendInput(input){const inputSeq=++this.inputSequence;this.safeSend(this.hostConnection,{type:'input',input,inputSeq});return inputSeq;}
   signal(index){if(this.isHost)this.callbacks.onSignal?.(this.slot,index);else this.safeSend(this.hostConnection,{type:'signal',index});}
+  cosmetic(kind){if(this.isHost)this.callbacks.onCosmetic?.(this.slot,kind);else this.safeSend(this.hostConnection,{type:'cosmetic',kind});}
   ping(){if(this.isHost)this.callbacks.onPing?.(this.slot);else this.safeSend(this.hostConnection,{type:'ping'});}
   broadcastState(state){
     if(this.broadcastSource!==state){this.broadcastSource=state;this.epoch++;}

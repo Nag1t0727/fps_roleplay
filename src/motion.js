@@ -1,4 +1,4 @@
-import {advanceMovement,canStand,normalizeAngle} from './engine.js?v=motion-1';
+import {advanceMovement,canStand,normalizeAngle} from './engine.js?v=cosmetics-3';
 const lerp=(a,b,t)=>a+(b-a)*t;
 const angleLerp=(a,b,t)=>normalizeAngle(a+normalizeAngle(b-a)*t);
 const copyPose=t=>({...t});
@@ -47,6 +47,7 @@ export class MotionView{
       for(const field of ['x','y','pitch','moveSpeed'])view[field]=lerp(a[field],b[field],t);
       for(const field of ['angle','bodyAngle','gait'])view[field]=angleLerp(a[field],b[field],t);
       if(!canStand(view.x,view.y)){view.x=b.x;view.y=b.y;}
+      if(team.emote)view.emote={...team.emote,life:Math.max(0,team.emote.life-Math.max(0,now-this.lastReceived)/1000)};
       return view;
     });
     const mine=teams.find(t=>t.id===slot[0]);

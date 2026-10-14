@@ -1,7 +1,7 @@
-import {createState,step,blankInput,addSignal,placePing,SLOTS,SLOT_LABELS,ROUND_COUNT,ITEM_INFO} from './engine.js?v=motion-1';
-import {Renderer} from './renderer.js?v=motion-1';
-import {MotionView,HostCamera} from './motion.js?v=motion-1';
-import {Room,generateCode} from './network.js?v=motion-1';
+import {createState,step,blankInput,addSignal,placePing,startEmote,placeSpray,EMOTES,SLOTS,SLOT_LABELS,ROUND_COUNT,ITEM_INFO} from './engine.js?v=cosmetics-3';
+import {Renderer} from './renderer.js?v=cosmetics-3';
+import {MotionView,HostCamera} from './motion.js?v=cosmetics-3';
+import {Room,generateCode} from './network.js?v=cosmetics-3';
 
 const motion=new MotionView(),hostCamera=new HostCamera();
 let pendingInput=blankInput(),lastSentInput='',localInputSeq=0,rosterSignature='',displayFps=60,renderMs=0;
@@ -29,6 +29,7 @@ async function connect(host){
     onState:(next,meta)=>{if(room!==session)return;state=next;if(!inGame)enterGame(false);motion.receive(next,meta,slot,performance.now());},
     onSignal:(from,index)=>{if(state&&state.status==='playing')addSignal(state,from,index);},
     onPing:from=>{if(state&&session.players.length===4)placePing(state,from);},
+    onCosmetic:(from,kind)=>{if(state&&session.players.length===4)applyCosmetic(state,from,kind);},
     onError:message=>{if(room!==session)return;networkIssue=message;status(message,true);},
     onStatus:message=>{if(room!==session)return;networkIssue='';status(message);},
     onClosed:message=>{if(room!==session)return;exitGame();leaveRoom();status(message,true);},
@@ -97,6 +98,7 @@ function configureRole(){
 function updatePointerHint(){
   const upper=slot.endsWith('upper');
   $('canvas-hint').textContent=upper?(document.pointerLockElement?'マウス：照準 / クリック：射撃 / G：ピン / Esc：解放':'クリックでマウス操作 / 矢印キー：照準 / Space：射撃 / G：ピン'):(solo?'WASD：視線基準の移動 / Tab：役割切替':'WASD：視線基準の移動 / 相棒のピンを確認');
+  $('canvas-hint').textContent+=' / B・N・M：エモート / T：スプレー';
 }
 function readInput(){
   const input=blankInput();
@@ -119,6 +121,16 @@ function sendSignal(index){
 function sendPing(){
   if(!inGame||!state||state.status!=='playing'||!slot.endsWith('upper')||$('help-dialog').open)return;
   if(solo)placePing(state,slot);else room?.ping();
+}
+function applyCosmetic(target,from,kind){return EMOTES.includes(kind)?startEmote(target,from,kind):placeSpray(target,from,kind);}
+let cosmeticNotice='',cosmeticNoticeUntil=0;
+function sendCosmetic(kind){
+  if(!inGame||!state||state.status!=='playing'||$('help-dialog').open||(!solo&&room?.players.length!==4))return;
+  // Preview validation gives immediate feedback; the host still validates the real action.
+  const valid=applyCosmetic(structuredClone(state),slot,kind);
+  cosmeticNotice=valid?(EMOTES.includes(kind)?'エモートを送信':'スプレーを送信'):'使用できません：待ち時間・HPを確認。スプレーは3m以内の壁か床へ。';
+  cosmeticNoticeUntil=performance.now()+2500;
+  if(valid){if(solo)applyCosmetic(state,slot,kind);else room?.cosmetic(kind);}
 }
 function switchRole(){
   if(!solo||!inGame)return;clearControls();slot=slot.endsWith('lower')?'a-upper':'a-lower';
@@ -145,6 +157,11 @@ function updateHUD(){
   const pingWait=Math.ceil(team.pingCooldown||0);
   $('ping-button').disabled=pingWait>0||state.status!=='playing'||(!solo&&room?.players.length!==4);
   $('ping-button').querySelector('span').textContent=pingWait?`ピン：あと${pingWait}秒`:'照準先にピン（15秒に1回）';
+  const cosmeticBlocked=team.hp<=0||state.status!=='playing'||(!solo&&room?.players.length!==4);
+  for(const id of ['emote-wave','emote-salute','emote-sway'])$(id).disabled=cosmeticBlocked||team.emoteCooldown>0;
+  $('spray-button').disabled=cosmeticBlocked||team.sprayCooldown>0;
+  $('cosmetic-status').textContent=performance.now()<cosmeticNoticeUntil?cosmeticNotice:
+    `${team.emote?team.emote.kind==='wave'?'手を振っています / ':team.emote.kind==='sway'?'横揺れ中 / ':'敬礼中 / ':''}エモート ${team.emoteCooldown>0?`あと${Math.ceil(team.emoteCooldown)}秒`:'使用可'} · スプレー ${team.sprayCooldown>0?`あと${Math.ceil(team.sprayCooldown)}秒`:'使用可'} · 設置 ${state.sprays?.length||0}/24`;
   const ping=state.pings?.find(p=>p.team===slot[0]);
   $('ping-status').textContent=ping?`◇ ${slot.endsWith('upper')?'共有中':'相棒のピン'} · あと${Math.ceil(ping.life)}秒`:'ピンは相棒と自分にだけ表示';
   $('body-heading').textContent=`BODY / W ${String(bodyDeg).padStart(3,'0')}°`;
@@ -236,8 +253,14 @@ $('quit-game').addEventListener('click',()=>{exitGame();if(room)leaveRoom();});
 $('retry').addEventListener('click',()=>{if(solo)enterGame(true);else startMission();});
 $('signal-one').addEventListener('click',()=>sendSignal(0));$('signal-two').addEventListener('click',()=>sendSignal(1));
 $('ping-button').addEventListener('click',sendPing);
+$('emote-wave').addEventListener('click',()=>sendCosmetic('wave'));
+$('emote-salute').addEventListener('click',()=>sendCosmetic('salute'));
+$('emote-sway').addEventListener('click',()=>sendCosmetic('sway'));
+$('spray-button').addEventListener('click',()=>sendCosmetic($('spray-style').value));
+$('spray-style').addEventListener('focus',clearControls);
+$('spray-style').addEventListener('change',()=>{$('viewport').focus({preventScroll:true});});
 $('copy-room').addEventListener('click',async()=>{
-  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','motion-1');url.hash=`room=${room.code}`;
+  if(!room)return;const url=new URL(location.href);url.searchParams.set('v','cosmetics-3');url.hash=`room=${room.code}`;
   try{await navigator.clipboard.writeText(url.href);status('招待URLをコピーしました。3人に共有してください。');}catch{status(`コピーできませんでした。コード ${room.code} を共有してください。`);}
 });
 $('toggle-help').addEventListener('click',()=>{clearControls();document.exitPointerLock?.();$('help-dialog').showModal();});
@@ -260,6 +283,8 @@ document.addEventListener('mousemove',e=>{
 document.addEventListener('pointerlockchange',()=>{mouseDown=false;updatePointerHint();});
 document.addEventListener('keydown',e=>{
   if(!inGame||$('help-dialog').open)return;
+  if(e.target instanceof HTMLSelectElement||e.target instanceof HTMLInputElement)return;
+  if(['KeyB','KeyN','KeyM','KeyT'].includes(e.code)){e.preventDefault();if(!e.repeat)sendCosmetic(e.code==='KeyB'?'wave':e.code==='KeyN'?'salute':e.code==='KeyM'?'sway':$('spray-style').value);return;}
   if(e.target instanceof HTMLButtonElement&&['Space','Enter'].includes(e.code))return;
   if(e.code==='Tab'&&solo){e.preventDefault();if(!e.repeat)switchRole();return;}
   if(e.code==='KeyG'){e.preventDefault();if(!e.repeat)sendPing();return;}

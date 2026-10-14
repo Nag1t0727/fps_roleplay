@@ -25,7 +25,7 @@ export const SLOT_LABELS = {'a-lower':'A / 下半身','a-upper':'A / 上半身',
 export const ROUND_SECONDS=90, ROUND_COUNT=3, ROUND_BREAK=5, SHOT_DAMAGE=25;
 export const PING_COOLDOWN=15, PING_LIFETIME=6;
 export const ITEM_INFO={repair:{name:'修理パック',color:'#d6fa70',symbol:'+'},shield:{name:'シールド',color:'#79efff',symbol:'◇'},boost:{name:'加速バッテリー',color:'#ffd36e',symbol:'»'},link:{name:'視界リンク',color:'#df9dff',symbol:'∞'},scan:{name:'スキャンパルス',color:'#ffad97',symbol:'◎'}};
-const freshEffects=()=>({shield:0,boost:0,link:0,scans:[],pickup:null});
+const freshEffects=()=>({emote:null,emoteCooldown:0,sprayCooldown:0,shield:0,boost:0,link:0,scans:[],pickup:null});
 function createItems(solo){
   const positions={shield:[[3.5,12.5],[16.5,3.5]],boost:[[5.5,10.5],[14.5,5.5]],link:[[8.5,7.5],[11.5,8.5]],scan:[[5.5,5.5],[14.5,10.5]]};
   if(solo)positions.repair=[[4.5,12.5],[15.5,3.5]];
@@ -39,7 +39,7 @@ export const distance = (a,b) => Math.hypot(a.x-b.x,a.y-b.y);
 
 export function createState(solo=false) {
   const state = {
-    solo, mode:solo?'practice':'duel', status:'playing', time:360, elapsed:0, collected:0, shots:[], signals:[], pings:[], kills:0,
+    solo, mode:solo?'practice':'duel', status:'playing', time:360, elapsed:0, collected:0, shots:[], signals:[], pings:[], sprays:[], kills:0,
     teams:[{id:'a',x:2.5,y:13.2,angle:-Math.PI/2,hp:100,cooldown:0,hurt:0,revive:0},
       {id:'b',x:4,y:13.2,angle:-Math.PI/2,hp:100,cooldown:0,hurt:0,revive:0}],
     cores:[{id:0,x:3.5,y:10.3,taken:false},{id:1,x:3,y:2.5,taken:false},
@@ -65,7 +65,7 @@ function resetDuelRound(state){
   state.cores.forEach(core=>{core.taken=false;});
   state.items.forEach(item=>{item.taken=false;});
   state.teams.forEach(team=>Object.assign(team,freshEffects()));
-  state.enemies=[];state.time=ROUND_SECONDS;state.status='playing';state.shots=[];state.signals=[];state.pings=[];
+  state.enemies=[];state.time=ROUND_SECONDS;state.status='playing';state.shots=[];state.signals=[];state.pings=[];state.sprays=[];
   state.collected=0;state.roundWinner=null;state.reason='';state.intermission=0;
 }
 
@@ -146,10 +146,39 @@ export function placePing(state,slot){
   return true;
 }
 
+export const EMOTES=['wave','salute','sway'],SPRAY_STYLES=['link','star','smile'];
+export function startEmote(state,slot,kind='wave'){
+  if(!state||!SLOTS.includes(slot)||!EMOTES.includes(kind)||state.status!=='playing')return false;
+  const team=state.teams.find(t=>t.id===slot[0]);
+  if(!team||team.hp<=0||team.emoteCooldown>0)return false;
+  team.emote={kind,life:3};team.emoteCooldown=5;return true;
+}
+export function placeSpray(state,slot,style='link'){
+  if(!state||!SLOTS.includes(slot)||!SPRAY_STYLES.includes(style)||state.status!=='playing')return false;
+  const team=state.teams.find(t=>t.id===slot[0]);
+  if(!team||team.hp<=0||team.sprayCooldown>0)return false;
+  const hit=raycast(team.x,team.y,team.angle),slope=Math.tan(team.pitch);
+  const floorD=slope<-.001?-EYE_HEIGHT/slope:Infinity;
+  const floor=floorD<hit.distance,d=floor?floorD:hit.distance,z=floor?0:EYE_HEIGHT+slope*d;
+  if(Math.hypot(d,z-EYE_HEIGHT)>3||z<0||z>WALL_HEIGHT)return false;
+  let x=team.x+Math.cos(team.angle)*d,y=team.y+Math.sin(team.angle)*d;
+  let nx=0,ny=0;
+  if(floor){if(!canStand(x,y,.27))return false;}
+  else{
+    if(hit.side){ny=-Math.sign(Math.sin(team.angle));x=Math.max(Math.floor(x)+.28,Math.min(Math.floor(x)+.72,x));y+=ny*.012;}
+    else{nx=-Math.sign(Math.cos(team.angle));y=Math.max(Math.floor(y)+.28,Math.min(Math.floor(y)+.72,y));x+=nx*.012;}
+  }
+  state.sprays??=[];
+  state.sprays.push({team:team.id,style,x,y,z:floor ? .012 :Math.max(.28,Math.min(WALL_HEIGHT-.28,z)),nx,ny,surface:floor?'floor':'wall'});
+  if(state.sprays.length>24)state.sprays.shift();team.sprayCooldown=4;return true;
+}
+
 function tickPings(state,dt){
   state.pings=state.pings.filter(p=>(p.life-=dt)>0);
   for(const team of state.teams)team.pingCooldown=Math.max(0,team.pingCooldown-dt);
   for(const team of state.teams){
+    team.emoteCooldown=Math.max(0,(team.emoteCooldown||0)-dt);team.sprayCooldown=Math.max(0,(team.sprayCooldown||0)-dt);
+    if(team.emote&&(team.emote.life-=dt)<=0)team.emote=null;
     for(const effect of ['shield','boost','link'])team[effect]=Math.max(0,team[effect]-dt);
     team.scans=team.scans.filter(p=>(p.life-=dt)>0);
     if(team.pickup&&(team.pickup.life-=dt)<=0)team.pickup=null;

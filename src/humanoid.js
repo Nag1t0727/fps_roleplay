@@ -1,8 +1,14 @@
 // Articulated world-space mannequin. z is height; pelvis and head have independent yaw.
+export function emoteSway(team){
+  if(team.emote?.kind!=='sway'||team.emote.life<=0)return 0;
+  const elapsed=3-team.emote.life;
+  return Math.sin(elapsed*Math.PI*3)*Math.min(1,elapsed/.2,team.emote.life/.2);
+}
 export function humanoidPose(team){
   const yaw=team.bodyAngle,walk=team.moveSpeed||0,phase=team.gait||0;
   const swing=Math.sin(phase)*walk,bob=Math.abs(Math.sin(phase))*walk*.015;
-  const local=(side,forward,z)=>({x:team.x-Math.sin(yaw)*side+Math.cos(yaw)*forward,y:team.y+Math.cos(yaw)*side+Math.sin(yaw)*forward,z:z+bob});
+  const sway=emoteSway(team)*.16;
+  const local=(side,forward,z)=>{side+=sway*Math.max(0,(z-.12)/.95);return ({x:team.x-Math.sin(yaw)*side+Math.cos(yaw)*forward,y:team.y+Math.cos(yaw)*side+Math.sin(yaw)*forward,z:z+bob});};
   const pose={pelvis:local(0,0,.59),chest:local(0,0,.84),neck:local(0,0,1.045)};
   for(const [name,sign] of [['left',-1],['right',1]]){
     const stride=swing*sign;
@@ -24,6 +30,11 @@ export function humanoidPose(team){
   pose.rightElbow={x:shoulder.x+look.x*.13,y:shoulder.y+look.y*.13,z:shoulder.z-.12+look.z*.10};
   pose.rightHand={x:shoulder.x+look.x*.34,y:shoulder.y+look.y*.34,z:shoulder.z+look.z*.34};
   pose.muzzle={x:pose.rightHand.x+look.x*.19,y:pose.rightHand.y+look.y*.19,z:pose.rightHand.z+look.z*.19};
+  if(team.emote?.life>0&&team.emote.kind!=='sway'){
+    const phase=(3-team.emote.life)*10;
+    pose.leftElbow=local(-.32,.02,1.12);
+    pose.leftHand=team.emote.kind==='salute'?local(-.10,.10,1.20):local(-.31+Math.sin(phase)*.09,.04,1.42);
+  }
   pose.local=local;
   return pose;
 }

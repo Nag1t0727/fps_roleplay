@@ -67,3 +67,14 @@ test('snapshots acknowledge only simulated input duration, reset new commands an
   guest.claim('b-upper');await drain();assert.equal(host.inputAcks['b-lower'],undefined);
   host.broadcastState(createState());await drain();assert.ok(received.at(-1).epoch>received[0].epoch);
 });
+
+test('cosmetics use assigned slots, validate styles, and deduplicate across brokers',async t=>{
+  const make=setup(t),events=[],host=make({onCosmetic:(slot,kind)=>events.push([slot,kind])});
+  await host.open(true,'COSMET','Host');const guest=make();await guest.open(false,'COSMET','Guest');
+  guest.cosmetic('wave');await drain();assert.deepEqual(events,[['a-upper','wave']]);
+  guest.safeSend(guest.hostConnection,{type:'cosmetic',kind:'star',slot:'b-lower'});await drain();
+  assert.deepEqual(events[1],['a-upper','star']);
+  guest.cosmetic('invalid');await drain();assert.equal(events.length,2);
+  host.cosmetic('salute');assert.deepEqual(events[2],['a-lower','salute']);
+  guest.cosmetic('sway');await drain();assert.deepEqual(events[3],['a-upper','sway']);
+});

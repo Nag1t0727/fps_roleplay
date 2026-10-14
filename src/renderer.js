@@ -1,6 +1,7 @@
-import {MAP,WIDTH,HEIGHT,HAZARDS,EXIT,raycast,normalizeAngle,distance,EYE_HEIGHT,WALL_HEIGHT,ROBOT_HEIGHT,ITEM_INFO} from './engine.js?v=motion-1';
-import {OutdoorEnvironment} from './environment.js?v=motion-1';
-import {drawHumanoid} from './humanoid.js';
+import {MAP,WIDTH,HEIGHT,HAZARDS,EXIT,raycast,normalizeAngle,distance,EYE_HEIGHT,WALL_HEIGHT,ROBOT_HEIGHT,ITEM_INFO,canStand} from './engine.js?v=cosmetics-3';
+import {OutdoorEnvironment} from './environment.js?v=cosmetics-3';
+import {drawHumanoid,emoteSway} from './humanoid.js?v=cosmetics-3';
+import {drawSprays} from './sprays.js?v=cosmetics-3';
 
 export function visibleEntities(state,slot){
   const upper=slot.endsWith('upper'),entities=[];
@@ -16,12 +17,33 @@ export function visibleEntities(state,slot){
 export const visiblePings=(state,slot)=>(state.pings||[]).filter(p=>p.team===slot[0]&&p.life>0);
 export const visibleScans=(state,slot)=>state.teams.find(t=>t.id===slot[0])?.scans.filter(p=>p.life>0)||[];
 
+// Camera-only offset: never changes movement, aim, hitboxes or role visibility.
+export function emoteCamera(team){
+  if(!(team.emote?.life>0)||team.hp<=0)return team;
+  let best=null;
+  for(const offset of [Math.PI,Math.PI*.75,-Math.PI*.75,Math.PI/2,-Math.PI/2,0]){
+    const angle=team.angle+offset;
+    const limit=Math.min(2.6,Math.max(0,raycast(team.x,team.y,angle).distance-.18));
+    let d=0;
+    for(let step=.04;step<=limit;step+=.04){
+      if(!canStand(team.x+Math.cos(angle)*step,team.y+Math.sin(angle)*step,.12))break;
+      d=step;
+    }
+    if(!best||d>best.d)best={angle,d};
+    if(offset===Math.PI&&d>=1.8)break;
+  }
+  return {...team,x:team.x+Math.cos(best.angle)*best.d,y:team.y+Math.sin(best.angle)*best.d,
+    angle:normalizeAngle(best.angle+Math.PI),pitch:-.10};
+}
+
 export class Renderer {
   constructor(canvas,bodyCanvas=null){this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});this.bodyCanvas=bodyCanvas;this.depth=[];this.environment=new OutdoorEnvironment(WIDTH,HEIGHT);}
   draw(state,slot){
     const {ctx:c,canvas}=this;
     const w=canvas.width,h=canvas.height,upper=slot.endsWith('upper')||state.teams.find(t=>t.id===slot[0])?.link>0;
-    const team=state.teams.find(t=>t.id===slot[0])||state.teams[0];
+    const actor=state.teams.find(t=>t.id===slot[0])||state.teams[0];
+    const team=emoteCamera(actor),thirdPerson=team!==actor;
+    canvas.dataset.perspective=thirdPerson?'third-person':'first-person';
     const plane=w*.72,horizon=h*.5+Math.tan(team.pitch)*plane;
     this.horizon=horizon;
     this.environment.draw(c,team,w,h,plane,horizon,EYE_HEIGHT,upper);
@@ -54,24 +76,31 @@ export class Renderer {
         c.fillStyle='#405a6b35';c.fillRect(x,top,2,1);c.fillRect(x,top+wallH,2,1);
       }
     }
+    drawSprays(this,state.sprays||[],team,plane,w,h);
     const entities=visibleEntities(state,slot);
+    if(thirdPerson)entities.push({...actor,type:'self'});
     entities.sort((a,b)=>distance(b,team)-distance(a,team));
     for(const entity of entities)this.sprite(entity,team,state,plane,w,h);
     // Upper body weapon belongs to both views, so the seeker can call out the aim.
     const firing=state.shots.some(s=>s.team===team.id&&s.life>.07);
     const bob=Math.sin(team.gait)*team.moveSpeed*6;
-    this.drawHands(w,h,bob,firing);
+    if(!thirdPerson){
+    this.drawHands(w,h,bob,firing,team);
     const weapon=c.createLinearGradient(w*.54,0,w*.67,0);weapon.addColorStop(0,'#1c2524');weapon.addColorStop(.35,'#57605b');weapon.addColorStop(.5,'#3f4742');weapon.addColorStop(1,'#151c1d');c.fillStyle=weapon;
     c.beginPath();c.moveTo(w*.57,h);c.lineTo(w*.57,h*.86+bob);c.lineTo(w*.54,h*.82+bob);c.lineTo(w*.54,h*.71+bob);c.lineTo(w*.59,h*.68+bob);c.lineTo(w*.64,h*.72+bob);c.lineTo(w*.67,h);c.fill();
     c.strokeStyle=upper?'#919789':'#5e7b91';c.lineWidth=2;c.stroke();
     c.fillStyle='#131e16';c.fillRect(w*.565,h*.725+bob,w*.045,h*.045);c.fillStyle='#d6fa70';c.fillRect(w*.575,h*.737+bob,w*.025,3);
     if(firing){c.fillStyle='#e5ffb2';c.beginPath();c.moveTo(w*.56,h*.69);c.lineTo(w*.52,h*.58);c.lineTo(w*.585,h*.63);c.lineTo(w*.62,h*.57);c.lineTo(w*.625,h*.7);c.fill();c.fillStyle='#d6fa7012';c.fillRect(0,0,w,h);}
-    if(upper)this.minimap(state,team,w,h);
+    }else{
+      c.save();c.fillStyle='#d6fa70';c.font='bold 16px sans-serif';c.textAlign='center';
+      c.fillText('EMOTE / 三人称',w/2,90);c.restore();
+    }
+    if(upper)this.minimap(state,actor,w,h);
     else this.seekerBadge(c,w,h,state);
-    this.bodyDirection(team,w,h);
+    this.bodyDirection(actor,w,h);
     for(const ping of visiblePings(state,slot))this.pingMarker(ping,team,plane,w,h);
     visibleScans(state,slot).forEach((scan,stack)=>this.pingMarker({...scan,stack},team,plane,w,h));
-    if(this.bodyCanvas)this.bodyPreview(team,firing);
+    if(this.bodyCanvas)this.bodyPreview(actor,firing);
     if(team.hurt>0){c.fillStyle=`rgba(218,55,38,${team.hurt*.5})`;c.fillRect(0,0,w,h);}
     if(team.hp<=0){c.fillStyle='#09100dde';c.fillRect(0,0,w,h);c.textAlign='center';c.fillStyle='#e5b18b';c.font='24px sans-serif';c.fillText('機体停止',w/2,h/2);c.textAlign='left';}
     const vignette=c.createRadialGradient(w/2,h/2,h*.18,w/2,h/2,w*.65);vignette.addColorStop(0,'transparent');vignette.addColorStop(1,'#101a183d');c.fillStyle=vignette;c.fillRect(0,0,w,h);
@@ -116,8 +145,9 @@ export class Renderer {
     c.save();c.beginPath();
     for(let x=Math.max(0,Math.floor((sx-size)/2)*2);x<Math.min(w,sx+size);x+=2)if(z<(this.depth[x]||0)+.12)c.rect(x,0,2,h);
     c.clip();
-    if(e.type==='opponent'){
-      drawHumanoid(c,e,p=>this.project(p,team,plane,w),{enemy:true,firing:state.shots.some(s=>s.team===e.id&&s.life>.07)});
+    if(e.type==='opponent'||e.type==='self'){
+      drawHumanoid(c,e,p=>this.project(p,team,plane,w),{enemy:e.type==='opponent',firing:state.shots.some(s=>s.team===e.id&&s.life>.07)});
+      if(e.type==='self'){c.restore();return;}
       const label=this.project({x:e.x,y:e.y,z:ROBOT_HEIGHT+.1},team,plane,w);
       c.fillStyle='#ffc3a1';c.font='10px monospace';c.textAlign='center';c.fillText(`ENEMY / UNIT ${e.id.toUpperCase()}`,label.x,label.y);c.restore();return;
     }
@@ -144,10 +174,16 @@ export class Renderer {
     if(depth<.1)return null;
     return {x:w/2+(-dx*Math.sin(team.angle)+dy*Math.cos(team.angle))*plane/depth,y:this.horizon+(EYE_HEIGHT-p.z)*plane/depth,scale:plane/depth,depth};
   }
-  drawHands(w,h,bob,firing){
+  drawHands(w,h,bob,firing,team){
     const c=this.ctx;
     for(const [side,sign] of [[.34,-1],[.72,1]]){
       const elbow={x:w*side,y:h*1.03},wrist={x:w*(.55+sign*.055),y:h*.84+bob+(firing?7:0)};
+      const sway=team?emoteSway(team):0;
+      elbow.x+=sway*w*.025;wrist.x+=sway*w*.018;
+      if(sign<0&&team?.emote&&team.emote.kind!=='sway'){
+        const salute=team.emote.kind==='salute',phase=(3-team.emote.life)*10;
+        wrist.x=w*(salute?.36:.25+Math.sin(phase)*.035);wrist.y=h*(salute?.28:.43);
+      }
       c.save();c.lineCap='round';c.strokeStyle='#1b2923';c.lineWidth=w*.06;c.beginPath();c.moveTo(elbow.x,elbow.y);c.lineTo(wrist.x,wrist.y);c.stroke();
       c.strokeStyle='#b6beaa';c.lineWidth=w*.043;c.stroke();
       c.fillStyle='#38493e';c.beginPath();c.arc(wrist.x,wrist.y,w*.027,0,Math.PI*2);c.fill();

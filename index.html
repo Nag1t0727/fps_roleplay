@@ -7,7 +7,7 @@
   <meta name="description" content="4人、2つの身体、全3ラウンド。2人で1体を操作する2対2の対戦FPS。">
   <title>SPLIT SIGNAL — ふたりで、ひとつの視界へ。</title>
   <link rel="icon" type="image/svg+xml" href="./assets/split-brain.svg?v=brain-eye">
-  <link rel="stylesheet" href="./style.css?v=20261013-type">
+  <link rel="stylesheet" href="./style.css?cosmetics-3&v=20261013-type">
 </head>
 <body>
   <header class="site-header">
@@ -116,6 +116,7 @@
           <p>照準先の壁・床・天井にピンを置きます。開始直後から使用でき、再使用まで15秒。自分と相棒に6秒間、位置と距離を表示します。画面外のピンは端の矢印で方向が分かります。</p>
           <p class="rule-callout">ピンは敵の自動探知や追尾ではありません。「この場所に注意」「ここへ進もう」を伝える目印です。スキャンアイテムによる敵位置の表示とは別に使えます。</p>
         </article>
+        <article class="rule-card"><span class="section-index">EMOTE / SPRAY</span><h3>身振りとペイントで表現しよう。</h3><p>Bで手を振る、Nで敬礼、Mで横揺れ。動作は3秒、再使用は5秒後。エモート中は相棒と自分の画面が三人称になり、終了すると元の視点に戻ります。Tで照準先3m以内の壁・床にスプレーできます。柄は右側で選択、再使用は4秒後。どちらの役割でも使用でき、待ち時間は機体で共有します。スプレーは全員に見え、全体で最大24枚（古いものから消去）。次のラウンドで消えます。エモートは自機と、通常の視界で見える相手機体に表示されます。</p><p>上半身役が照準を合わせ、下半身役も同じ照準先にスプレーできます。移動や射撃はエモート中も可能です。</p></article>
         <article id="rules-items" class="rule-card rule-card-wide">
           <span class="section-index">05 / AUTO ITEMS</span><h3>拾った瞬間に、ふたりの力になる。</h3>
           <p>下半身役がアイテムに触れると、その機体に自動発動。使用ボタンは不要です。発動中の効果と残り時間は画面右側で確認できます。</p>
@@ -161,13 +162,24 @@
         <div class="sidebar-divider"></div>
         <div class="section-index">AUTO ITEMS</div><p id="item-effects" class="small-text muted">発動中のアイテムなし</p><p id="item-pickup" class="small-text" role="status" aria-live="polite"></p><div class="section-index">QUICK SIGNAL</div><button id="ping-button" class="signal-button" hidden><kbd>G</kbd><span>照準先にピン（15秒に1回）</span></button><p id="ping-status" class="small-text muted">ピンは相棒と自分にだけ表示</p><p class="small-text muted">相棒の画面にメッセージを送る</p>
         <button id="signal-one" class="signal-button"><kbd>Q</kbd><span>正面に敵</span></button><button id="signal-two" class="signal-button"><kbd>E</kbd><span>コアが見える</span></button>
+        <section class="cosmetic-controls" aria-label="エモートとスプレー">
+          <div class="section-index">EMOTE / SPRAY</div>
+          <button id="emote-wave" class="signal-button"><kbd>B</kbd><span>手を振る</span></button>
+          <button id="emote-salute" class="signal-button"><kbd>N</kbd><span>敬礼する</span></button>
+          <button id="emote-sway" class="signal-button"><kbd>M</kbd><span>横揺れする</span></button>
+          <label for="spray-style">スプレーの柄</label>
+          <select id="spray-style"><option value="link">リンク ∞</option><option value="star">スター ☆</option><option value="smile">スマイル ☺</option></select>
+          <button id="spray-button" class="signal-button"><kbd>T</kbd><span>照準先にスプレー</span></button>
+          <p class="small-text muted">両役割で使用可。3m以内の壁・床を狙おう。色はチーム別。</p>
+          <p id="cosmetic-status" class="small-text" role="status" aria-live="polite"></p>
+        </section>
         <div class="mission-tip"><span>FIELD NOTE</span><p id="field-note">相棒に敵の方向を伝えよう。君には、引き金を引けない。</p></div>
       </aside>
     </div>
     <div class="game-footer"><span id="game-network">● LOCAL SIMULATION</span><span>音声通話で連携しよう · Escでマウスを解放</span><button id="toggle-help" class="text-link">操作説明</button></div>
-    <dialog id="help-dialog"><h2>ふたりで動かす、ひとつの身体。</h2><p>下半身：WASDで視線を基準に前後・左右へ移動。Wは画面の正面へ進みます。上半身：マウスまたは矢印キーで照準を上下左右へ動かし、クリックかSpaceで射撃。首は左右360°、上下60°まで動きます。視線の水平な向きに身体と移動方向が追従します。Gで照準先にピンを置けます。最初はすぐ使用可能、次は15秒後。ピンは自分と相棒に6秒間表示され、敵を自動追尾しません。Q / Eは相棒だけへの合図。</p><p>対戦は全3ラウンド、各90秒。相手を倒すか、時間切れで残りHPが多い側が勝利。同じHP・同時撃破は引き分けです。射撃は25ダメージ、コアに触れると30回復。赤い床はダメージを受けます。ラウンド間は5秒待ち、開始位置を交代してHPとコアをリセット。3ラウンド合計の勝利数で総合勝敗を決めます。</p><p>アイテムは触れると自動発動。修理はHPを30回復、シールドは8秒以内の敵の攻撃1回を防御、加速は6秒間1.3倍、視界リンクは3秒間2人とも全情報が見えます。スキャンは取得時の敵位置を3秒間表示し、追尾しません。赤い床のダメージはシールドでも防げません。</p><p>1人練習は脱出ルールです。6分以内にコア4個を回収して北東の出口へ。Tabで役割を切り替えます。自動操作の相棒はいません。上半身で向きを決め、下半身で移動してください。右下の自機モデルで四肢と首の向きを確認できます。</p><form method="dialog"><button class="button primary">了解</button></form></dialog>
+    <dialog id="help-dialog"><h2>ふたりで動かす、ひとつの身体。</h2><p>下半身：WASDで視線を基準に前後・左右へ移動。Wは画面の正面へ進みます。上半身：マウスまたは矢印キーで照準を上下左右へ動かし、クリックかSpaceで射撃。首は左右360°、上下60°まで動きます。視線の水平な向きに身体と移動方向が追従します。Gで照準先にピンを置けます。最初はすぐ使用可能、次は15秒後。ピンは自分と相棒に6秒間表示され、敵を自動追尾しません。Q / Eは相棒だけへの合図。</p><p>対戦は全3ラウンド、各90秒。相手を倒すか、時間切れで残りHPが多い側が勝利。同じHP・同時撃破は引き分けです。射撃は25ダメージ、コアに触れると30回復。赤い床はダメージを受けます。ラウンド間は5秒待ち、開始位置を交代してHPとコアをリセット。3ラウンド合計の勝利数で総合勝敗を決めます。</p><p>アイテムは触れると自動発動。修理はHPを30回復、シールドは8秒以内の敵の攻撃1回を防御、加速は6秒間1.3倍、視界リンクは3秒間2人とも全情報が見えます。スキャンは取得時の敵位置を3秒間表示し、追尾しません。赤い床のダメージはシールドでも防げません。</p><p>1人練習は脱出ルールです。6分以内にコア4個を回収して北東の出口へ。Tabで役割を切り替えます。自動操作の相棒はいません。上半身で向きを決め、下半身で移動してください。右下の自機モデルで四肢と首の向きを確認できます。</p><p>Bで手を振る、Nで敬礼、Mで横揺れ。動作は3秒、再使用は5秒後。エモート中は相棒と自分の画面が三人称になり、終了すると元の視点に戻ります。Tで照準先3m以内の壁・床にスプレーできます。柄は右側で選択、再使用は4秒後。どちらの役割でも使用でき、待ち時間は機体で共有します。スプレーは全員に見え、全体で最大24枚（古いものから消去）。次のラウンドで消えます。エモートは自機と、通常の視界で見える相手機体に表示されます。</p><form method="dialog"><button class="button primary">了解</button></form></dialog>
   </main>
   <script type="module" src="./src/lobby-video.js?v=20261013-1"></script>
-  <script type="module" src="./src/app.js?v=motion-1"></script>
+  <script type="module" src="./src/app.js?v=cosmetics-3"></script>
 </body>
 </html>
